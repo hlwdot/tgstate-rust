@@ -60,6 +60,16 @@ fn wants_html(headers: &axum::http::HeaderMap) -> bool {
         .unwrap_or(false)
 }
 
+fn path_matches_public_entry(path: &str, public_entry: &str) -> bool {
+    if public_entry == "/" {
+        path == "/"
+    } else if public_entry.ends_with('/') {
+        path.starts_with(public_entry)
+    } else {
+        path == public_entry || path.starts_with(&format!("{}/", public_entry))
+    }
+}
+
 fn is_https(headers: &HeaderMap) -> bool {
     headers
         .get("x-forwarded-proto")
@@ -140,6 +150,7 @@ pub async fn auth_middleware(
     if active_pwd.as_deref().unwrap_or("").is_empty() {
         let public_no_auth = [
             "/",
+            "/welcome",
             "/login",
             "/api/auth/login",
             "/api/auth/logout",
@@ -151,7 +162,7 @@ pub async fn auth_middleware(
         ];
         if public_no_auth
             .iter()
-            .any(|p| &path == p || path.starts_with(&format!("{}/", p)) || path.starts_with(p))
+            .any(|p| path_matches_public_entry(&path, p))
         {
             return next.run(req).await;
         }
