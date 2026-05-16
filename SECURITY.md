@@ -37,7 +37,7 @@ Out of scope:
 
 - Configure Authelia OIDC (`OIDC_ISSUER_URL`, `OIDC_CLIENT_ID`,
   `OIDC_CLIENT_SECRET`) before exposing the web UI. The redirect URI is
-  derived from the public request host as `https://your-host/api/auth/callback`.
+  derived from configured `BASE_URL` as `BASE_URL/api/auth/callback`.
 - Restrict who can use the client in Authelia's OIDC/access policy.
 - Put the service behind a reverse proxy that terminates TLS and forwards
   `X-Forwarded-Proto: https`; set `COOKIE_SECURE=1` to force `Secure` cookies

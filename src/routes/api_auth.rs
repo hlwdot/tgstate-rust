@@ -108,36 +108,32 @@ fn oidc_settings(state: &AppState) -> Result<OidcSettings, axum::response::Respo
     }
 }
 
-fn forwarded_proto(headers: &HeaderMap) -> &str {
-    headers
-        .get("x-forwarded-proto")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.split(',').next())
-        .map(str::trim)
-        .filter(|v| *v == "http" || *v == "https")
-        .unwrap_or("http")
-}
+fn oidc_redirect_url(state: &AppState) -> Result<String, axum::response::Response> {
+    let app_settings = crate::config::get_app_settings(&state.settings, &state.db_pool);
+    let base_url = app_settings
+        .get("BASE_URL")
+        .and_then(|v| v.as_deref())
+        .unwrap_or("")
+        .trim()
+        .trim_end_matches('/');
 
-fn request_host(headers: &HeaderMap) -> Option<&str> {
-    headers
-        .get("x-forwarded-host")
-        .or_else(|| headers.get(axum::http::header::HOST))
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.split(',').next())
-        .map(str::trim)
-        .filter(|v| !v.is_empty() && !v.contains('/'))
-}
+    if base_url.is_empty() {
+        return Err(json_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "BASE_URL 未配置，无法生成 OIDC callback",
+            "base_url_not_configured",
+        ));
+    }
 
-fn oidc_redirect_url(headers: &HeaderMap) -> Result<String, axum::response::Response> {
-    request_host(headers)
-        .map(|host| format!("{}://{}/api/auth/callback", forwarded_proto(headers), host))
-        .ok_or_else(|| {
-            json_error(
-                StatusCode::BAD_REQUEST,
-                "请求缺少 Host，无法生成 OIDC callback",
-                "missing_host",
-            )
-        })
+    if !base_url.starts_with("http://") && !base_url.starts_with("https://") {
+        return Err(json_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "BASE_URL 必须以 http:// 或 https:// 开头",
+            "base_url_invalid",
+        ));
+    }
+
+    Ok(format!("{}/api/auth/callback", base_url))
 }
 
 type TgOidcClient = CoreClient<
@@ -255,14 +251,13 @@ fn merge_user_info(
 
 async fn login_start(
     State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
     Query(query): Query<LoginQuery>,
 ) -> axum::response::Response {
     let settings = match oidc_settings(&state) {
         Ok(settings) => settings,
         Err(resp) => return resp,
     };
-    let redirect_url = match oidc_redirect_url(&headers) {
+    let redirect_url = match oidc_redirect_url(&state) {
         Ok(url) => url,
         Err(resp) => return resp,
     };
@@ -323,9 +318,9 @@ async fn login_callback(
         }
     };
 
-    let redirect_url = match oidc_redirect_url(&headers) {
+    let redirect_url = match oidc_redirect_url(&state) {
         Ok(url) => url,
-        Err(_) => return redirect_error("请求缺少 Host", "missing_host"),
+        Err(_) => return redirect_error("BASE_URL 配置不可用", "base_url_invalid"),
     };
     let client = match oidc_client(&settings, &state.http_client, redirect_url).await {
         Ok(client) => client,

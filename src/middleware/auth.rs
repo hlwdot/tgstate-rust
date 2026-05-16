@@ -218,7 +218,12 @@ pub async fn auth_middleware(
     // Login endpoints must be reachable without an application session. The
     // callback still validates the OIDC state/nonce/PKCE tuple before creating
     // a local session.
-    let public_api = ["/api/auth/login", "/api/auth/callback", "/api/auth/logout"];
+    let public_api = [
+        "/api/health",
+        "/api/auth/login",
+        "/api/auth/callback",
+        "/api/auth/logout",
+    ];
     if public_api
         .iter()
         .any(|p| &path == p || path_matches_public_entry(&path, p))

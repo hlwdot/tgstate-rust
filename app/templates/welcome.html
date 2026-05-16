@@ -36,7 +36,15 @@
     </main>
 
     <script>
-        document.getElementById('redirect-uri').value = `${window.location.origin}/api/auth/callback`;
+        fetch('/api/app-config')
+            .then(r => r.ok ? r.json() : null)
+            .then(data => {
+                const baseUrl = (data?.cfg?.BASE_URL || window.location.origin).replace(/\/+$/, '');
+                document.getElementById('redirect-uri').value = `${baseUrl}/api/auth/callback`;
+            })
+            .catch(() => {
+                document.getElementById('redirect-uri').value = `${window.location.origin}/api/auth/callback`;
+            });
     </script>
 </body>
 </html>

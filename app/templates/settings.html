@@ -147,7 +147,8 @@ function initData() {
             }
             document.getElementById('OIDC_ISSUER_URL').value = configState.OIDC_ISSUER_URL || '';
             document.getElementById('OIDC_CLIENT_ID').value = configState.OIDC_CLIENT_ID || '';
-            document.getElementById('OIDC_REDIRECT_URL').value = `${window.location.origin}/api/auth/callback`;
+            const configuredBaseUrl = (configState.BASE_URL || window.location.origin).replace(/\/+$/, '');
+            document.getElementById('OIDC_REDIRECT_URL').value = `${configuredBaseUrl}/api/auth/callback`;
         });
 }
 

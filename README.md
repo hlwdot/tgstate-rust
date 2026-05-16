@@ -38,7 +38,7 @@ cd tgstate
 ### 方式二：Docker
 
 ```bash
-docker run -d --name tgstate -p 8000:8000 -v tgstate_data:/app/data \
+docker run -d --name tgstate -p 8000:7860 -v tgstate_data:/app/data \
   $(docker build -q .)
 ```
 
@@ -49,7 +49,7 @@ services:
   tgstate:
     build: .
     ports:
-      - "8000:8000"
+      - "8000:7860"
     volumes:
       - tgstate_data:/app/data
     restart: unless-stopped
@@ -68,11 +68,12 @@ cargo build --release
 
 ## 配置流程
 
-1. 先在 Authelia 创建 OIDC 客户端，回调地址设为 `https://你的图床域名/api/auth/callback`
-2. 通过环境变量配置 `OIDC_ISSUER_URL`、`OIDC_CLIENT_ID`、`OIDC_CLIENT_SECRET`
-3. 启动后访问 Web 界面，使用 Authelia 登录
-4. 进入「系统设置」页面，填写 Bot Token（从 [@BotFather](https://t.me/BotFather) 获取）和频道名
-5. 点击「保存并应用」
+1. 先确定公开访问地址 `BASE_URL`，例如 `https://你的图床域名`
+2. 在 Authelia 创建 OIDC 客户端，回调地址设为 `BASE_URL/api/auth/callback`
+3. 通过环境变量配置 `BASE_URL`、`OIDC_ISSUER_URL`、`OIDC_CLIENT_ID`、`OIDC_CLIENT_SECRET`
+4. 启动后访问 Web 界面，使用 Authelia 登录
+5. 进入「系统设置」页面，填写 Bot Token（从 [@BotFather](https://t.me/BotFather) 获取）和频道名
+6. 点击「保存并应用」
 
 Telegram 和 PicGo 配置保存在本地数据库中；OIDC 统一身份认证配置来自环境变量。
 
@@ -88,7 +89,7 @@ OIDC 是管理界面的强制登录方式，必须先配置后才能使用后台
 | `BOT_TOKEN` | Telegram Bot Token | - |
 | `CHANNEL_NAME` | 目标频道 `@name` 或 `-100xxx` | - |
 | `PICGO_API_KEY` | PicGo 上传 API 密钥 | - |
-| `BASE_URL` | 公开访问 URL | `http://127.0.0.1:8000` |
+| `BASE_URL` | 公开访问 URL，也用于生成 OIDC callback，例如 `https://your-domain.example` | `http://127.0.0.1:8000` |
 | `DATA_DIR` | 数据目录 | `app/data` |
 | `LOG_LEVEL` | 日志级别 | `info` |
 | `SESSION_MAX_AGE_SECS` | 登录会话 Cookie 有效期（秒） | `604800` (7天) |
