@@ -127,7 +127,7 @@ async fn process_update(
         // Handle "get" reply
         if let Some(text) = &msg.text {
             if text.trim().to_lowercase() == "get" && msg.reply_to_message.is_some() {
-                handle_get_reply(msg, tg_service, base_url).await;
+                handle_get_reply(msg, channel_name, tg_service, base_url).await;
             }
         }
     }
@@ -144,6 +144,17 @@ async fn process_update(
     }
 }
 
+fn message_from_configured_channel(message: &Message, channel_name: &str) -> bool {
+    let chat = &message.chat;
+    if channel_name.starts_with('@') {
+        chat.username
+            .as_deref()
+            .map_or(false, |u| u == channel_name.trim_start_matches('@'))
+    } else {
+        chat.id.to_string() == channel_name
+    }
+}
+
 async fn handle_new_file(
     message: &Message,
     channel_name: &str,
@@ -151,16 +162,7 @@ async fn handle_new_file(
     event_bus: &BroadcastEventBus,
 ) {
     // Check source
-    let chat = &message.chat;
-    let is_allowed = if channel_name.starts_with('@') {
-        chat.username
-            .as_deref()
-            .map_or(false, |u| u == channel_name.trim_start_matches('@'))
-    } else {
-        chat.id.to_string() == channel_name
-    };
-
-    if !is_allowed {
+    if !message_from_configured_channel(message, channel_name) {
         return;
     }
 
@@ -226,6 +228,7 @@ async fn handle_new_file(
 
 async fn handle_get_reply(
     message: &Message,
+    channel_name: &str,
     tg_service: &TelegramService,
     base_url: &str,
 ) {
@@ -233,6 +236,12 @@ async fn handle_get_reply(
         Some(r) => r,
         None => return,
     };
+
+    if !message_from_configured_channel(message, channel_name)
+        || !message_from_configured_channel(replied, channel_name)
+    {
+        return;
+    }
 
     let (file_id, file_name) = if let Some(doc) = &replied.document {
         (

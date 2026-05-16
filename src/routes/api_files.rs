@@ -448,13 +448,18 @@ async fn download_file_short_head(
 
 async fn download_file_legacy(
     State(state): State<Arc<AppState>>,
-    Path((file_id, filename)): Path<(String, String)>,
+    Path((file_id, _filename)): Path<(String, String)>,
     Query(query): Query<DownloadQuery>,
     headers: HeaderMap,
 ) -> Response {
     let tg_service = match get_telegram_service(&state) {
         Ok(s) => s,
         Err(e) => return e.into_response(),
+    };
+
+    let meta = match database::get_file_by_id(&state.db_pool, &file_id) {
+        Ok(Some(f)) => f,
+        _ => return http_error(StatusCode::NOT_FOUND, "文件未找到", "not_found").into_response(),
     };
 
     let force_download = query
@@ -464,8 +469,8 @@ async fn download_file_legacy(
     serve_file(
         &state,
         &tg_service,
-        &file_id,
-        &filename,
+        &meta.file_id,
+        &meta.filename,
         &headers,
         force_download,
         false,
@@ -475,13 +480,18 @@ async fn download_file_legacy(
 
 async fn download_file_legacy_head(
     State(state): State<Arc<AppState>>,
-    Path((file_id, filename)): Path<(String, String)>,
+    Path((file_id, _filename)): Path<(String, String)>,
     Query(query): Query<DownloadQuery>,
     headers: HeaderMap,
 ) -> Response {
     let tg_service = match get_telegram_service(&state) {
         Ok(s) => s,
         Err(e) => return e.into_response(),
+    };
+
+    let meta = match database::get_file_by_id(&state.db_pool, &file_id) {
+        Ok(Some(f)) => f,
+        _ => return http_error(StatusCode::NOT_FOUND, "文件未找到", "not_found").into_response(),
     };
 
     let force_download = query
@@ -491,8 +501,8 @@ async fn download_file_legacy_head(
     serve_file(
         &state,
         &tg_service,
-        &file_id,
-        &filename,
+        &meta.file_id,
+        &meta.filename,
         &headers,
         force_download,
         true,
