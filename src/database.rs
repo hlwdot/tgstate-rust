@@ -1,3 +1,4 @@
+use chrono::{Duration, Utc};
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rand::Rng;
@@ -57,10 +58,8 @@ pub fn init_db(data_dir: &str) -> DbPool {
         }
     }
 
-    conn.execute_batch(
-        "CREATE UNIQUE INDEX IF NOT EXISTS idx_files_short_id ON files(short_id);",
-    )
-    .ok();
+    conn.execute_batch("CREATE UNIQUE INDEX IF NOT EXISTS idx_files_short_id ON files(short_id);")
+        .ok();
 
     conn.execute_batch(
         "CREATE INDEX IF NOT EXISTS idx_files_upload_date ON files(upload_date DESC);",
@@ -79,11 +78,8 @@ pub fn init_db(data_dir: &str) -> DbPool {
     )
     .expect("Failed to create app_settings table");
 
-    conn.execute(
-        "INSERT OR IGNORE INTO app_settings (id) VALUES (1)",
-        [],
-    )
-    .expect("Failed to init app_settings row");
+    conn.execute("INSERT OR IGNORE INTO app_settings (id) VALUES (1)", [])
+        .expect("Failed to init app_settings row");
 
     // Migration: add session_token column if missing
     let has_session_token: bool = conn
@@ -96,9 +92,37 @@ pub fn init_db(data_dir: &str) -> DbPool {
     if !has_session_token {
         tracing::info!("Migrating database: adding session_token column...");
         if let Err(e) = conn.execute("ALTER TABLE app_settings ADD COLUMN session_token TEXT", []) {
-            tracing::error!("Migration warning: Failed to add session_token column: {}", e);
+            tracing::error!(
+                "Migration warning: Failed to add session_token column: {}",
+                e
+            );
         }
     }
+
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS oidc_login_states (
+            state TEXT PRIMARY KEY,
+            nonce TEXT NOT NULL,
+            pkce_verifier TEXT NOT NULL,
+            next_path TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            expires_at TIMESTAMP NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS auth_sessions (
+            token TEXT PRIMARY KEY,
+            subject TEXT NOT NULL,
+            username TEXT,
+            email TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            expires_at TIMESTAMP NOT NULL,
+            last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_oidc_login_states_expires_at ON oidc_login_states(expires_at);
+        CREATE INDEX IF NOT EXISTS idx_auth_sessions_expires_at ON auth_sessions(expires_at);",
+    )
+    .expect("Failed to create auth tables");
 
     tracing::info!("数据库已成功初始化");
     pool
@@ -175,7 +199,9 @@ pub fn add_file_metadata(
             Err(e) => return Err(e.into()),
         }
     }
-    Err(AppErrorKind::Other("Failed to generate unique short_id".into()))
+    Err(AppErrorKind::Other(
+        "Failed to generate unique short_id".into(),
+    ))
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -210,7 +236,10 @@ pub fn get_all_files(pool: &DbPool) -> Result<Vec<FileMetadata>, AppErrorKind> {
     Ok(files)
 }
 
-pub fn get_file_by_id(pool: &DbPool, identifier: &str) -> Result<Option<FileMetadata>, AppErrorKind> {
+pub fn get_file_by_id(
+    pool: &DbPool,
+    identifier: &str,
+) -> Result<Option<FileMetadata>, AppErrorKind> {
     let conn = pool.get()?;
     let result = conn.query_row(
         "SELECT filename, filesize, upload_date, file_id, short_id FROM files WHERE short_id = ?1 OR file_id = ?1",
@@ -235,12 +264,14 @@ pub fn get_file_by_id(pool: &DbPool, identifier: &str) -> Result<Option<FileMeta
 
 pub fn delete_file_metadata(pool: &DbPool, file_id: &str) -> Result<bool, AppErrorKind> {
     let conn = pool.get()?;
-    let rows = conn
-        .execute("DELETE FROM files WHERE file_id = ?1", params![file_id])?;
+    let rows = conn.execute("DELETE FROM files WHERE file_id = ?1", params![file_id])?;
     Ok(rows > 0)
 }
 
-pub fn delete_file_by_message_id(pool: &DbPool, message_id: i64) -> Result<Option<String>, AppErrorKind> {
+pub fn delete_file_by_message_id(
+    pool: &DbPool,
+    message_id: i64,
+) -> Result<Option<String>, AppErrorKind> {
     let conn = pool.get()?;
     let pattern = format!("{}:%", message_id);
 
@@ -275,10 +306,8 @@ pub fn get_app_settings_from_db(
             let mut map = HashMap::new();
             map.insert("BOT_TOKEN".to_string(), row.get::<_, Option<String>>(0)?);
             map.insert("CHANNEL_NAME".to_string(), row.get::<_, Option<String>>(1)?);
-            map.insert("PASS_WORD".to_string(), row.get::<_, Option<String>>(2)?);
             map.insert("PICGO_API_KEY".to_string(), row.get::<_, Option<String>>(3)?);
             map.insert("BASE_URL".to_string(), row.get::<_, Option<String>>(4)?);
-            map.insert("SESSION_TOKEN".to_string(), row.get::<_, Option<String>>(5)?);
             Ok(map)
         },
     );
@@ -291,8 +320,7 @@ pub fn get_app_settings_from_db(
 }
 
 fn norm(v: Option<&str>) -> Option<String> {
-    v.map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
+    v.map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
 }
 
 pub fn save_app_settings_to_db(
@@ -305,10 +333,10 @@ pub fn save_app_settings_to_db(
         params![
             norm(payload.get("BOT_TOKEN").and_then(|v| v.as_deref())),
             norm(payload.get("CHANNEL_NAME").and_then(|v| v.as_deref())),
-            norm(payload.get("PASS_WORD").and_then(|v| v.as_deref())),
+            Option::<String>::None,
             norm(payload.get("PICGO_API_KEY").and_then(|v| v.as_deref())),
             norm(payload.get("BASE_URL").and_then(|v| v.as_deref())),
-            norm(payload.get("SESSION_TOKEN").and_then(|v| v.as_deref())),
+            Option::<String>::None,
         ],
     )?;
     Ok(())
@@ -318,9 +346,146 @@ pub fn reset_app_settings_in_db(pool: &DbPool) -> Result<(), AppErrorKind> {
     let mut payload = HashMap::new();
     payload.insert("BOT_TOKEN".to_string(), None);
     payload.insert("CHANNEL_NAME".to_string(), None);
-    payload.insert("PASS_WORD".to_string(), None);
     payload.insert("PICGO_API_KEY".to_string(), None);
     payload.insert("BASE_URL".to_string(), None);
-    payload.insert("SESSION_TOKEN".to_string(), None);
     save_app_settings_to_db(pool, &payload)
+}
+
+#[derive(Debug, Clone)]
+pub struct OidcLoginState {
+    pub nonce: String,
+    pub pkce_verifier: String,
+    pub next_path: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct AuthSession {
+    pub subject: String,
+    pub username: Option<String>,
+    pub email: Option<String>,
+}
+
+pub fn insert_oidc_login_state(
+    pool: &DbPool,
+    state: &str,
+    nonce: &str,
+    pkce_verifier: &str,
+    next_path: Option<&str>,
+    ttl_secs: i64,
+) -> Result<(), AppErrorKind> {
+    let conn = pool.get()?;
+    cleanup_expired_auth_rows_with_conn(&conn).ok();
+    let expires_at = (Utc::now() + Duration::seconds(ttl_secs)).to_rfc3339();
+    conn.execute(
+        "INSERT INTO oidc_login_states (state, nonce, pkce_verifier, next_path, expires_at)
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![state, nonce, pkce_verifier, next_path, expires_at],
+    )?;
+    Ok(())
+}
+
+pub fn take_oidc_login_state(
+    pool: &DbPool,
+    state: &str,
+) -> Result<Option<OidcLoginState>, AppErrorKind> {
+    let conn = pool.get()?;
+    cleanup_expired_auth_rows_with_conn(&conn).ok();
+    let result = conn.query_row(
+        "SELECT nonce, pkce_verifier, next_path
+         FROM oidc_login_states
+         WHERE state = ?1 AND expires_at > ?2",
+        params![state, Utc::now().to_rfc3339()],
+        |row| {
+            Ok(OidcLoginState {
+                nonce: row.get(0)?,
+                pkce_verifier: row.get(1)?,
+                next_path: row.get(2)?,
+            })
+        },
+    );
+    conn.execute(
+        "DELETE FROM oidc_login_states WHERE state = ?1",
+        params![state],
+    )
+    .ok();
+
+    match result {
+        Ok(login_state) => Ok(Some(login_state)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(e.into()),
+    }
+}
+
+pub fn insert_auth_session(
+    pool: &DbPool,
+    token: &str,
+    subject: &str,
+    username: Option<&str>,
+    email: Option<&str>,
+    ttl_secs: i64,
+) -> Result<(), AppErrorKind> {
+    let conn = pool.get()?;
+    cleanup_expired_auth_rows_with_conn(&conn).ok();
+    let expires_at = (Utc::now() + Duration::seconds(ttl_secs)).to_rfc3339();
+    conn.execute(
+        "INSERT INTO auth_sessions (token, subject, username, email, expires_at, last_seen)
+         VALUES (?1, ?2, ?3, ?4, ?5, CURRENT_TIMESTAMP)",
+        params![token, subject, username, email, expires_at],
+    )?;
+    Ok(())
+}
+
+pub fn get_auth_session(pool: &DbPool, token: &str) -> Result<Option<AuthSession>, AppErrorKind> {
+    let conn = pool.get()?;
+    let result = conn.query_row(
+        "SELECT subject, username, email
+         FROM auth_sessions
+         WHERE token = ?1 AND expires_at > ?2",
+        params![token, Utc::now().to_rfc3339()],
+        |row| {
+            Ok(AuthSession {
+                subject: row.get(0)?,
+                username: row.get(1)?,
+                email: row.get(2)?,
+            })
+        },
+    );
+
+    match result {
+        Ok(session) => {
+            conn.execute(
+                "UPDATE auth_sessions SET last_seen = CURRENT_TIMESTAMP WHERE token = ?1",
+                params![token],
+            )
+            .ok();
+            Ok(Some(session))
+        }
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(e.into()),
+    }
+}
+
+pub fn delete_auth_session(pool: &DbPool, token: &str) -> Result<(), AppErrorKind> {
+    let conn = pool.get()?;
+    conn.execute("DELETE FROM auth_sessions WHERE token = ?1", params![token])?;
+    Ok(())
+}
+
+pub fn cleanup_expired_auth_rows(pool: &DbPool) -> Result<(), AppErrorKind> {
+    let conn = pool.get()?;
+    cleanup_expired_auth_rows_with_conn(&conn)?;
+    Ok(())
+}
+
+fn cleanup_expired_auth_rows_with_conn(conn: &rusqlite::Connection) -> Result<(), rusqlite::Error> {
+    let now = Utc::now().to_rfc3339();
+    conn.execute(
+        "DELETE FROM oidc_login_states WHERE expires_at <= ?1",
+        params![now],
+    )?;
+    conn.execute(
+        "DELETE FROM auth_sessions WHERE expires_at <= ?1",
+        params![now],
+    )?;
+    Ok(())
 }

@@ -126,12 +126,7 @@ async fn welcome(State(state): State<Arc<AppState>>) -> impl IntoResponse {
 }
 
 async fn index(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    if config::get_active_password(&state.settings, &state.db_pool)
-        .as_deref()
-        .unwrap_or("")
-        .trim()
-        .is_empty()
-    {
+    if !state.settings.oidc.is_configured() {
         let ctx = tera::Context::new();
         return render(&state, "welcome.html", &ctx);
     }
@@ -152,6 +147,7 @@ async fn index(State(state): State<Arc<AppState>>) -> impl IntoResponse {
 async fn login(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let mut ctx = tera::Context::new();
     ctx.insert("request_path", "/login");
+    ctx.insert("oidc_configured", &state.settings.oidc.is_configured());
     render(&state, "pwd.html", &ctx)
 }
 

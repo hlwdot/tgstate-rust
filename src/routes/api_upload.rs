@@ -115,55 +115,30 @@ async fn upload_file(
         });
 
     let picgo_key = app_settings.get("PICGO_API_KEY").and_then(|v| v.as_deref());
-    let pass_word = app_settings.get("PASS_WORD").and_then(|v| v.as_deref());
-    // Upload auth used to derive a sha256 of the password and feed that as
-    // the expected cookie value. That comparison was always a no-op because
-    // session cookies are random tokens (see `auth::generate_session_token`)
-    // that are independent of the password hash. The auth middleware already
-    // validates the session cookie against the stored SESSION_TOKEN before
-    // the request ever reaches this handler, so we just forward the raw
-    // password presence to `ensure_upload_auth` for the referer / picgo-key
-    // branches. The cookie branch inside `ensure_upload_auth` is reachable
-    // only for header-level requests the middleware already allowed.
-    let pass_word_hash_ref = pass_word;
+    let oidc_required = state.settings.oidc.is_configured();
 
     let header_key = headers
         .get("x-api-key")
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_string());
-    let auth_optional = picgo_key.map_or(true, |k| k.is_empty())
-        && pass_word_hash_ref.map_or(true, |p| p.is_empty());
+    let auth_optional = picgo_key.map_or(true, |k| k.is_empty()) && !oidc_required;
     // Pre-check auth using only HEADER-available credentials: the session
     // cookie (browser login) and/or x-api-key (PicGo / API clients). These
     // are the only credentials that exist before we consume the multipart
     // body. Referer is client-controlled and auth.rs ignores it.
-    //
-    // The browser session cookie is the random SESSION_TOKEN from
-    // app_settings, NOT the password. We verify it directly against the
-    // stored token so a logged-in browser can upload without submitting a
-    // form `key` field. `auth_middleware` uses the same comparison.
-    let session_token_owned = app_settings
-        .get("SESSION_TOKEN")
-        .and_then(|v| v.clone());
-    let cookie_valid = match (cookie_value.as_deref(), session_token_owned.as_deref()) {
-        (Some(c), Some(t)) if !c.is_empty() && !t.is_empty() => {
-            auth::secure_compare(c, t)
-        }
-        _ => false,
-    };
-    // ensure_upload_auth handles the x-api-key / PicGo path. We pass None
-    // for the cookie because cookie validity is handled via `cookie_valid`
-    // above — that function still compares cookie to the password hash,
-    // which does not match the random session token used in v2.x.
+    let cookie_valid = cookie_value
+        .as_deref()
+        .and_then(|token| {
+            database::get_auth_session(&state.db_pool, token)
+                .ok()
+                .flatten()
+        })
+        .is_some();
+    // ensure_upload_auth handles the x-api-key / PicGo path. Browser session
+    // cookies are checked against the server-side OIDC session table above.
     let prechecked_auth = cookie_valid
-        || auth::ensure_upload_auth(
-            has_referer,
-            None,
-            picgo_key,
-            pass_word_hash_ref,
-            header_key.as_deref(),
-        )
-        .is_ok();
+        || auth::ensure_upload_auth(has_referer, picgo_key, oidc_required, header_key.as_deref())
+            .is_ok();
 
     // Parse multipart body - stream file chunks to Telegram
     let mut form_key: Option<String> = None;
@@ -185,9 +160,8 @@ async fn upload_file(
             if !auth_progress.auth_verified {
                 if let Err((_, msg, code)) = auth::ensure_upload_auth(
                     has_referer,
-                    None,
                     picgo_key,
-                    pass_word_hash_ref,
+                    oidc_required,
                     key_text.as_deref(),
                 ) {
                     return Err(http_error(axum::http::StatusCode::UNAUTHORIZED, msg, code));
@@ -239,13 +213,9 @@ async fn upload_file(
     // multipart body instead of as a header.
     if !prechecked_auth {
         let final_key = form_key.as_deref();
-        if let Err((_, msg, code)) = auth::ensure_upload_auth(
-            has_referer,
-            None,
-            picgo_key,
-            pass_word_hash_ref,
-            final_key,
-        ) {
+        if let Err((_, msg, code)) =
+            auth::ensure_upload_auth(has_referer, picgo_key, oidc_required, final_key)
+        {
             return Err(http_error(axum::http::StatusCode::UNAUTHORIZED, msg, code));
         }
     }
@@ -383,7 +353,7 @@ pub fn router() -> Router<Arc<AppState>> {
 #[cfg(test)]
 mod tests {
     use super::{advance_upload_auth_state, UploadAuthProgress, UploadFieldError};
-    use crate::config::Settings;
+    use crate::config::{OidcSettings, Settings};
     use crate::database;
     use crate::state::AppState;
     use axum::body::{to_bytes, Body};
@@ -406,12 +376,16 @@ mod tests {
         let settings = Settings {
             bot_token: Some("123456:test-token".into()),
             channel_name: Some("@test_channel".into()),
-            pass_word: Some("secret".into()),
             picgo_api_key: None,
             base_url: "http://127.0.0.1:8000".into(),
             _mode: "p".into(),
             _file_route: "/d/".into(),
             data_dir: data_dir.clone(),
+            oidc: OidcSettings {
+                issuer_url: Some("https://auth.example.com".into()),
+                client_id: Some("tgstate".into()),
+                client_secret: Some("secret".into()),
+            },
         };
 
         let db_pool = database::init_db(&data_dir);
@@ -476,7 +450,11 @@ mod tests {
 
         let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
         let text = String::from_utf8(body.to_vec()).unwrap();
-        assert!(text.contains("file_before_auth"), "unexpected body: {}", text);
+        assert!(
+            text.contains("file_before_auth"),
+            "unexpected body: {}",
+            text
+        );
 
         let files = database::get_all_files(&state.db_pool).unwrap();
         assert!(files.is_empty(), "unexpected files persisted: {:?}", files);

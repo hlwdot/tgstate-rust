@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Log In - tgState</title>
+    <title>Sign In - tgState</title>
     <link rel="stylesheet" href="/static/ui.css?v=5.2">
     <script src="/static/ui.js?v=5.2"></script>
     <script>
@@ -22,44 +22,29 @@
         <div class="standalone-wrap">
             <section class="standalone-card">
                 <h1 class="standalone-title">Welcome Back</h1>
-                <p class="standalone-subtitle">Enter the admin password to continue.</p>
+                <p class="standalone-subtitle">Sign in with Authelia to continue.</p>
 
-                <form id="login-form" onsubmit="return false;">
-                    <div class="input-group">
-                        <label class="input-label">Password</label>
-                        <input type="password" class="input-field" id="password" name="password" placeholder="Enter password" required autofocus>
-                    </div>
-                    <button type="submit" class="btn btn-primary" style="width:100%;min-height:48px;font-size:15px;" onclick="submitLogin()">Log In</button>
-                </form>
+                {% if oidc_configured %}
+                <a id="login-button" href="/api/auth/login" class="btn btn-primary" style="width:100%;min-height:48px;font-size:15px;justify-content:center;">Continue with Authelia</a>
+                {% else %}
+                <a href="/welcome" class="btn btn-primary" style="width:100%;min-height:48px;font-size:15px;justify-content:center;">Open Setup</a>
+                {% endif %}
             </section>
         </div>
     </main>
 
     <script>
-    async function submitLogin() {
-        const pwd = document.getElementById('password').value;
-        if (!pwd) return;
-        const btn = document.querySelector('button[type="submit"]');
-        Utils.setLoading(btn, true);
-        try {
-            const res = await fetch('/api/auth/login', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ password: pwd })
-            });
-            if (res.ok) {
-                window.location.replace('/');
-            } else {
-                Toast.show('Incorrect password', 'error');
-                document.getElementById('password').value = '';
-                document.getElementById('password').focus();
-            }
-        } catch (e) {
-            Toast.show('Network error', 'error');
-        } finally {
-            Utils.setLoading(btn, false);
+    (function() {
+        const params = new URLSearchParams(window.location.search);
+        const err = params.get('error');
+        if (err && window.Toast) Toast.show(err, 'error');
+
+        const btn = document.getElementById('login-button');
+        if (btn) {
+            const next = params.get('next');
+            if (next) btn.href = `/api/auth/login?next=${encodeURIComponent(next)}`;
         }
-    }
+    })();
     </script>
 </body>
 </html>

@@ -35,14 +35,17 @@ Out of scope:
 
 ## Hardening tips for operators
 
-- Set `PASS_WORD` so the web UI is not world-editable.
+- Configure Authelia OIDC (`OIDC_ISSUER_URL`, `OIDC_CLIENT_ID`,
+  `OIDC_CLIENT_SECRET`) before exposing the web UI. The redirect URI is
+  derived from the public request host as `https://your-host/api/auth/callback`.
+- Restrict who can use the client in Authelia's OIDC/access policy.
 - Put the service behind a reverse proxy that terminates TLS and forwards
   `X-Forwarded-Proto: https`; set `COOKIE_SECURE=1` to force `Secure` cookies
   even when the direct listener is plaintext.
 - Only set `TRUST_FORWARDED_FOR=1` if the proxy is trusted to overwrite
   `X-Forwarded-For` / `X-Real-IP`. Otherwise rate limiting can be bypassed.
-- Back up `data.db` regularly; it contains the hashed password and session
-  token.
+- Back up `data.db` regularly; it contains Telegram metadata, app settings,
+  OIDC login state, and active local session tokens.
 
 ## Public endpoints (by design)
 
@@ -53,8 +56,10 @@ not file issues against it.
 - `GET /d/:short_id` — streams a shared file by its short identifier.
 - `GET /share/:short_id` — renders an HTML preview page for the same file.
 - `GET /api/health` — used by Docker / load balancers.
-- `GET /`, `GET /login`, and `POST /api/auth/login` on first boot (when no
-  password has been set).
+- `GET /login`, `GET /welcome`, `GET /api/auth/login`,
+  `GET /api/auth/callback`, and `POST /api/auth/logout` — required for the
+  OIDC sign-in/out flow. The callback validates state, nonce, PKCE, and ID
+  Token claims before creating a local session.
 
 `short_id` values behave like bearer tokens. They are generated with
 cryptographically-random input and only the prefix is ever logged, but if you

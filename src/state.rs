@@ -120,10 +120,7 @@ pub async fn apply_runtime_settings(
     let bot_ready = config::is_bot_ready(&current);
 
     // Soft refresh path: the caller only wants to pick up updated
-    // `app_settings` (e.g. after `/api/auth/login` rotates SESSION_TOKEN).
-    // Previously this code stopped the running bot even for soft refreshes,
-    // which meant logging in as the admin would silently kill the Telegram
-    // bot. Now we only update the in-memory snapshot and leave the bot alone.
+    // `app_settings` without restarting the Telegram bot.
     if !start_bot_flag {
         let mut bot = state.bot_state.lock().await;
         bot.app_settings = current;

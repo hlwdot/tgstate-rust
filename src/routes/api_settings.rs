@@ -1,22 +1,15 @@
 use std::sync::Arc;
 
 use axum::extract::State;
-use axum::http::HeaderMap;
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::Deserialize;
 
-use crate::auth;
 use crate::config;
 use crate::database;
 use crate::error::http_error;
 use crate::state::{self, AppState};
-
-#[derive(Deserialize)]
-pub struct PasswordRequest {
-    password: String,
-}
 
 #[derive(Deserialize)]
 pub struct AppConfigRequest {
@@ -24,8 +17,6 @@ pub struct AppConfigRequest {
     bot_token: Option<String>,
     #[serde(rename = "CHANNEL_NAME")]
     channel_name: Option<String>,
-    #[serde(rename = "PASS_WORD")]
-    pass_word: Option<String>,
     #[serde(rename = "BASE_URL")]
     base_url: Option<String>,
     #[serde(rename = "PICGO_API_KEY")]
@@ -40,23 +31,37 @@ pub struct VerifyRequest {
     channel_name: Option<String>,
 }
 
-fn validate_config(cfg: &std::collections::HashMap<String, Option<String>>) -> Result<(), (axum::http::StatusCode, &'static str, &'static str)> {
+fn validate_config(
+    cfg: &std::collections::HashMap<String, Option<String>>,
+) -> Result<(), (axum::http::StatusCode, &'static str, &'static str)> {
     if let Some(Some(token)) = cfg.get("BOT_TOKEN") {
         let t = token.trim();
         if !t.is_empty() && (!t.contains(':') || t.len() < 20) {
-            return Err((axum::http::StatusCode::BAD_REQUEST, "BOT_TOKEN 格式不正确", "invalid_bot_token"));
+            return Err((
+                axum::http::StatusCode::BAD_REQUEST,
+                "BOT_TOKEN 格式不正确",
+                "invalid_bot_token",
+            ));
         }
     }
     if let Some(Some(channel)) = cfg.get("CHANNEL_NAME") {
         let c = channel.trim();
         if !c.is_empty() && !c.starts_with('@') && !c.starts_with("-100") {
-            return Err((axum::http::StatusCode::BAD_REQUEST, "CHANNEL_NAME 格式不正确（@username 或 -100...）", "invalid_channel"));
+            return Err((
+                axum::http::StatusCode::BAD_REQUEST,
+                "CHANNEL_NAME 格式不正确（@username 或 -100...）",
+                "invalid_channel",
+            ));
         }
     }
     if let Some(Some(url)) = cfg.get("BASE_URL") {
         let u = url.trim();
         if !u.is_empty() && !u.starts_with("http://") && !u.starts_with("https://") {
-            return Err((axum::http::StatusCode::BAD_REQUEST, "BASE_URL 必须以 http:// 或 https:// 开头", "invalid_base_url"));
+            return Err((
+                axum::http::StatusCode::BAD_REQUEST,
+                "BASE_URL 必须以 http:// 或 https:// 开头",
+                "invalid_base_url",
+            ));
         }
     }
     Ok(())
@@ -73,38 +78,17 @@ fn merge_config(
 
     if let Some(ref v) = incoming.bot_token {
         let v = v.trim().to_string();
-        result.insert("BOT_TOKEN".into(), if v.is_empty() { None } else { Some(v) });
+        result.insert(
+            "BOT_TOKEN".into(),
+            if v.is_empty() { None } else { Some(v) },
+        );
     }
     if let Some(ref v) = incoming.channel_name {
         let v = v.trim().to_string();
-        result.insert("CHANNEL_NAME".into(), if v.is_empty() { None } else { Some(v) });
-    }
-    if let Some(ref v) = incoming.pass_word {
-        let v = v.trim().to_string();
-        if v.is_empty() {
-            result.insert("PASS_WORD".into(), None);
-            result.insert("SESSION_TOKEN".into(), None);
-        } else {
-            // Hash password and compute a cryptographically random session token.
-            // The token is independent of the password, so sessions cannot be
-            // forged from knowledge of the plaintext or hash. If hashing fails we
-            // REJECT the update rather than falling back to plaintext storage.
-            match auth::hash_password(&v) {
-                Ok(hashed) => {
-                    let session_token = auth::generate_session_token();
-                    result.insert("PASS_WORD".into(), Some(hashed));
-                    result.insert("SESSION_TOKEN".into(), Some(session_token));
-                }
-                Err(e) => {
-                    tracing::error!("密码哈希失败: {}", e);
-                    return Err((
-                        axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                        "密码哈希失败",
-                        "hash_error",
-                    ));
-                }
-            }
-        }
+        result.insert(
+            "CHANNEL_NAME".into(),
+            if v.is_empty() { None } else { Some(v) },
+        );
     }
     if let Some(ref v) = incoming.base_url {
         let v = v.trim().to_string();
@@ -112,16 +96,12 @@ fn merge_config(
     }
     if let Some(ref v) = incoming.picgo_api_key {
         let v = v.trim().to_string();
-        result.insert("PICGO_API_KEY".into(), if v.is_empty() { None } else { Some(v) });
+        result.insert(
+            "PICGO_API_KEY".into(),
+            if v.is_empty() { None } else { Some(v) },
+        );
     }
     Ok(result)
-}
-
-fn is_https(headers: &HeaderMap) -> bool {
-    headers
-        .get("x-forwarded-proto")
-        .and_then(|v| v.to_str().ok())
-        .map_or(false, |v| v == "https")
 }
 
 async fn get_app_config(State(state): State<Arc<AppState>>) -> impl IntoResponse {
@@ -133,9 +113,11 @@ async fn get_app_config(State(state): State<Arc<AppState>>) -> impl IntoResponse
         "cfg": {
             "BOT_TOKEN_SET": settings.get("BOT_TOKEN").and_then(|v| v.as_deref()).map_or(false, |v| !v.is_empty()),
             "CHANNEL_NAME": settings.get("CHANNEL_NAME").and_then(|v| v.as_deref()).unwrap_or(""),
-            "PASS_WORD_SET": settings.get("PASS_WORD").and_then(|v| v.as_deref()).map_or(false, |v| !v.is_empty()),
             "BASE_URL": settings.get("BASE_URL").and_then(|v| v.as_deref()).unwrap_or(""),
             "PICGO_API_KEY_SET": settings.get("PICGO_API_KEY").and_then(|v| v.as_deref()).map_or(false, |v| !v.is_empty()),
+            "OIDC_CONFIGURED": state.settings.oidc.is_configured(),
+            "OIDC_ISSUER_URL": state.settings.oidc.issuer_url.as_deref().unwrap_or(""),
+            "OIDC_CLIENT_ID": state.settings.oidc.client_id.as_deref().unwrap_or(""),
         },
         "bot": {
             "ready": bot.bot_ready,
@@ -175,7 +157,6 @@ async fn save_config_only(
 
 async fn save_and_apply(
     State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
     Json(payload): Json<AppConfigRequest>,
 ) -> Result<impl IntoResponse, impl IntoResponse> {
     let existing = database::get_app_settings_from_db(&state.db_pool).unwrap_or_default();
@@ -199,37 +180,14 @@ async fn save_and_apply(
 
     let bot = state.bot_state.lock().await;
 
-    // Handle password cookie using the server-side random session token.
-    // We honor x-forwarded-proto so cookies get the Secure flag when a
-    // trusted reverse proxy terminates TLS; the COOKIE_SECURE env var
-    // (handled inside build_cookie) can force Secure regardless.
-    let session_token = merged
-        .get("SESSION_TOKEN")
-        .and_then(|v| v.as_deref())
-        .unwrap_or("");
-    let pwd = merged
-        .get("PASS_WORD")
-        .and_then(|v| v.as_deref())
-        .unwrap_or("");
-    let secure = is_https(&headers);
-    let cookie = if !pwd.is_empty() && !session_token.is_empty() {
-        auth::build_cookie(session_token, secure)
-    } else {
-        // No password set OR no session token — clear any stale cookie.
-        auth::build_clear_cookie()
-    };
-
-    Ok((
-        [(axum::http::header::SET_COOKIE, cookie)],
-        Json(serde_json::json!({
-            "status": "ok",
-            "message": "已保存并应用",
-            "bot": {
-                "ready": bot.bot_ready,
-                "running": bot.bot_running,
-            }
-        })),
-    ))
+    Ok(Json(serde_json::json!({
+        "status": "ok",
+        "message": "已保存并应用",
+        "bot": {
+            "ready": bot.bot_ready,
+            "running": bot.bot_running,
+        }
+    })))
 }
 
 async fn reset_config(State(state): State<Arc<AppState>>) -> impl IntoResponse {
@@ -246,46 +204,6 @@ async fn reset_config(State(state): State<Arc<AppState>>) -> impl IntoResponse {
             "message": "配置已重置"
         })),
     )
-}
-
-async fn set_password(
-    State(state): State<Arc<AppState>>,
-    Json(payload): Json<PasswordRequest>,
-) -> Result<Json<serde_json::Value>, crate::error::AppError> {
-    let db_pool = &state.db_pool;
-    let password = payload.password.trim().to_string();
-
-    // Hash the password with argon2 and compute session token
-    let hashed = auth::hash_password(&password).map_err(|e| {
-        tracing::error!("密码哈希失败: {}", e);
-        crate::error::AppError::new(
-            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            "密码哈希失败",
-            "hash_error",
-        )
-    })?;
-    // Random session token, independent of the password.
-    let session_token = auth::generate_session_token();
-
-    let mut current = database::get_app_settings_from_db(db_pool).unwrap_or_default();
-    current.insert("PASS_WORD".into(), Some(hashed));
-    current.insert("SESSION_TOKEN".into(), Some(session_token));
-
-    database::save_app_settings_to_db(db_pool, &current).map_err(|_| {
-        crate::error::AppError::new(
-            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            "无法写入密码。",
-            "write_password_failed",
-        )
-    })?;
-
-    let _ = state::apply_runtime_settings(state.clone(), false).await;
-    tracing::info!("密码已成功设置");
-
-    Ok(Json(serde_json::json!({
-        "status": "ok",
-        "message": "密码已成功设置。"
-    })))
 }
 
 async fn verify_bot(
@@ -317,9 +235,7 @@ async fn verify_bot(
         Ok(resp) => match resp.json::<serde_json::Value>().await {
             Ok(data) => {
                 if data["ok"].as_bool() == Some(true) {
-                    let username = data["result"]["username"]
-                        .as_str()
-                        .unwrap_or("unknown");
+                    let username = data["result"]["username"].as_str().unwrap_or("unknown");
                     Json(serde_json::json!({
                         "status": "ok",
                         "ok": true,
@@ -353,7 +269,7 @@ async fn verify_bot(
                 "available": false,
                 "message": "连接失败"
             }))
-        },
+        }
     }
 }
 
@@ -438,7 +354,7 @@ async fn verify_channel(
                 "available": false,
                 "message": "连接失败"
             }))
-        },
+        }
     }
 }
 
@@ -448,7 +364,6 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/api/app-config/save", post(save_config_only))
         .route("/api/app-config/apply", post(save_and_apply))
         .route("/api/reset-config", post(reset_config))
-        .route("/api/set-password", post(set_password))
         .route("/api/verify/bot", post(verify_bot))
         .route("/api/verify/channel", post(verify_channel))
 }

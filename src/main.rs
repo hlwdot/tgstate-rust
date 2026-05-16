@@ -30,8 +30,7 @@ async fn main() {
     let log_level = std::env::var("LOG_LEVEL").unwrap_or_else(|_| "info".into());
     tracing_subscriber::fmt()
         .with_env_filter(
-            EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| EnvFilter::new(&log_level)),
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&log_level)),
         )
         .init();
 
@@ -47,7 +46,9 @@ async fn main() {
     // Create shared HTTP client
     let http_client = reqwest::Client::builder()
         .pool_max_idle_per_host(50)
-        .timeout(std::time::Duration::from_secs(constants::HTTP_TIMEOUT_TRANSFER_SECS))
+        .timeout(std::time::Duration::from_secs(
+            constants::HTTP_TIMEOUT_TRANSFER_SECS,
+        ))
         .build()
         .expect("Failed to create HTTP client");
     tracing::info!("共享的 HTTP 客户端已创建");
@@ -84,10 +85,25 @@ async fn main() {
     // Background cleanup for rate limiter
     let rl_clone = rate_limiter.clone();
     tokio::spawn(async move {
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(constants::RATE_LIMIT_CLEANUP_INTERVAL_SECS));
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(
+            constants::RATE_LIMIT_CLEANUP_INTERVAL_SECS,
+        ));
         loop {
             interval.tick().await;
             middleware::rate_limit::cleanup_expired(&rl_clone).await;
+        }
+    });
+
+    let auth_db_pool = state.db_pool.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(
+            constants::RATE_LIMIT_CLEANUP_INTERVAL_SECS,
+        ));
+        loop {
+            interval.tick().await;
+            if let Err(e) = database::cleanup_expired_auth_rows(&auth_db_pool) {
+                tracing::warn!("清理过期认证记录失败: {}", e);
+            }
         }
     });
 
@@ -138,9 +154,6 @@ async fn shutdown_signal(state: Arc<AppState>) {
 fn tera_url_for(
     args: &std::collections::HashMap<String, tera::Value>,
 ) -> tera::Result<tera::Value> {
-    let path = args
-        .get("path")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
+    let path = args.get("path").and_then(|v| v.as_str()).unwrap_or("");
     Ok(tera::Value::String(format!("/static{}", path)))
 }
