@@ -6,11 +6,12 @@ const Toast = {
         const toast = document.createElement('div');
         toast.className = `toast toast-${type}`;
         toast.style.cssText = `
-            background: var(--bg-surface); color: var(--text-primary);
-            padding: 12px 24px; border-radius: 8px; margin-top: 12px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.15); font-size: 14px;
+            background: var(--bg-solid); color: var(--text-primary);
+            padding: 12px 16px; border-radius: var(--sharp-corner); margin-top: 12px;
+            box-shadow: var(--shadow-float); font-size: 13px;
             display: flex; align-items: center; gap: 8px;
-            transform: translateY(-20px); opacity: 0; transition: all 0.3s;
+            opacity: 0; transition: opacity 0.2s;
+            border: 1px solid var(--border-color);
             border-left: 4px solid ${type === 'error' ? 'var(--danger-color)' : 'var(--success-color)'};
         `;
         
@@ -19,20 +20,21 @@ const Toast = {
             ? '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--danger-color)" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>'
             : '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--success-color)" stroke-width="2"><polyline points="20 6 9 17 4 12"></polyline></svg>';
             
-        toast.innerHTML = `${icon}<span>${message}</span>`;
+        toast.insertAdjacentHTML('beforeend', icon);
+        const text = document.createElement('span');
+        text.textContent = String(message);
+        toast.appendChild(text);
         
         container.appendChild(toast);
         
         // Animate in
         requestAnimationFrame(() => {
-            toast.style.transform = 'translateY(0)';
             toast.style.opacity = '1';
         });
         
         // Auto remove
         setTimeout(() => {
             toast.style.opacity = '0';
-            toast.style.transform = 'translateY(-20px)';
             setTimeout(() => toast.remove(), 300);
         }, 3000);
     },
@@ -66,18 +68,19 @@ const Modal = {
         const card = document.createElement('div');
         card.id = 'app-modal-card';
         card.style.cssText = `
-            background: var(--bg-surface); width: 90%; max-width: 320px;
-            border-radius: var(--radius-lg); padding: 24px;
+            background: var(--bg-solid); width: 90%; max-width: 400px;
+            border: 1px solid var(--border-color);
+            border-radius: var(--sharp-corner); padding: 24px;
             box-shadow: var(--shadow-md); transform: scale(0.95);
             transition: transform 0.2s;
         `;
         
         card.innerHTML = `
-            <h3 id="modal-title" style="font-size: 18px; font-weight: 600; margin-bottom: 12px;"></h3>
+            <h3 id="modal-title" style="font-size: 18px; font-weight: 700; margin: 0 0 12px;"></h3>
             <p id="modal-msg" style="color: var(--text-secondary); font-size: 14px; margin-bottom: 24px; line-height: 1.5;"></p>
             <div style="display: flex; gap: 12px; justify-content: flex-end;">
-                <button id="modal-cancel" class="btn btn-secondary" style="flex: 1;">取消</button>
-                <button id="modal-confirm" class="btn btn-primary" style="flex: 1;">确定</button>
+                <button id="modal-cancel" class="btn btn-secondary" style="flex: 1;">Cancel</button>
+                <button id="modal-confirm" class="btn btn-primary" style="flex: 1;">Confirm</button>
             </div>
         `;
         
@@ -122,18 +125,18 @@ const Modal = {
     }
 };
 
-// 通用工具
+// Shared utilities
 const Utils = {
     async copy(text) {
-        // 如果 text 是相对路径，自动转换为完整 URL
+        // Convert relative download paths to absolute URLs before copying.
         if (text.startsWith('/')) {
             text = window.location.origin + text;
         }
 
-        const successToast = () => Toast.show('已复制到剪贴板');
-        const failToast = () => Toast.show('复制失败，请手动复制', 'error');
+        const successToast = () => Toast.show('Copied to clipboard');
+        const failToast = () => Toast.show('Copy failed. Copy manually instead', 'error');
 
-        // 优先使用 navigator.clipboard
+        // Prefer the async Clipboard API when available.
         if (navigator.clipboard && navigator.clipboard.writeText) {
             try {
                 await navigator.clipboard.writeText(text);
@@ -148,13 +151,13 @@ const Utils = {
         try {
             const textarea = document.createElement('textarea');
             textarea.value = text;
-            // 必须可见才能被 select，使用 fixed 移出可视区但保持渲染
+            // Keep the textarea rendered so selection works on older browsers.
             textarea.style.position = 'fixed';
             textarea.style.left = '0';
             textarea.style.top = '0';
             textarea.style.opacity = '0.01';
             textarea.style.pointerEvents = 'none';
-            textarea.setAttribute('readonly', ''); // 防止软键盘弹出
+            textarea.setAttribute('readonly', '');
             
             document.body.appendChild(textarea);
             textarea.focus();
@@ -181,16 +184,17 @@ const Utils = {
             `;
             const content = document.createElement('div');
             content.style.cssText = `
-                background: var(--bg-surface); padding: 24px; border-radius: 12px;
+                background: var(--bg-solid); padding: 24px; border-radius: var(--sharp-corner);
+                border: 1px solid var(--border-color);
                 width: 90%; max-width: 320px; text-align: center;
-                box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+                box-shadow: var(--shadow-float);
             `;
             content.innerHTML = `
-                <p style="margin-bottom: 12px; font-weight: 500; color: var(--text-primary);">复制失败，请长按手动复制：</p>
+                <p style="margin-bottom: 12px; font-weight: 700; color: var(--text-primary);">Copy failed. Copy manually:</p>
                 <div style="background: var(--bg-body); padding: 8px; border-radius: 6px; margin-bottom: 16px; border: 1px solid var(--border-color);">
                     <div style="word-break: break-all; font-family: monospace; font-size: 13px; color: var(--text-primary); user-select: text;">${text}</div>
                 </div>
-                <button class="btn btn-primary" style="width: 100%;">关闭</button>
+                <button class="btn btn-primary" style="width: 100%;">Close</button>
             `;
             modal.appendChild(content);
             document.body.appendChild(modal);
@@ -209,7 +213,7 @@ const Utils = {
         if (!btn) return;
         if (isLoading) {
             btn.dataset.originalText = btn.innerHTML;
-            btn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="spin"><path d="M21 12a9 9 0 1 1-6.219-8.56"></path></svg> 处理中...`;
+            btn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="spin"><path d="M21 12a9 9 0 1 1-6.219-8.56"></path></svg> Working...`;
             btn.classList.add('loading');
             btn.disabled = true;
         } else {
@@ -220,39 +224,33 @@ const Utils = {
     }
 };
 
-// 复制文件链接的辅助函数
+// File link copy helper.
 window.copyLink = (shortId, fileId, filename) => {
-    // 回滚：只生成 /d/{id}，不带文件名/slug
     const id = (shortId && shortId !== 'None' && shortId !== '') ? shortId : fileId;
     const path = `/d/${id}`;
     Utils.copy(path);
 };
 
-// 认证系统
+// Authentication helpers.
 const Auth = {
     async logout() {
-        const confirmed = await Modal.confirm('退出登录', '确定要退出当前账号吗？');
+        const confirmed = await Modal.confirm('Log out', 'Log out of the current session?');
         if (!confirmed) return;
         
         try {
             const res = await fetch('/api/auth/logout', {
                 method: 'POST',
-                // 确保携带凭证（Cookies）
                 credentials: 'include' 
             });
             
             if (res.ok) {
-                // 清理可能存在的本地状态
-                // localStorage.removeItem('some_key'); 
-                
-                // 强制跳转到登录页，并替换历史记录，防止后退
                 window.location.replace('/login');
             } else {
-                Toast.show('退出失败，请刷新重试', 'error');
+                Toast.show('Logout failed. Refresh and try again', 'error');
             }
         } catch (e) {
             console.error(e);
-            Toast.show('网络错误', 'error');
+            Toast.show('Network error', 'error');
         }
     }
 };
@@ -270,11 +268,12 @@ const Theme = {
             theme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
         }
         document.documentElement.setAttribute('data-theme', theme);
+        document.documentElement.classList.toggle('dark', theme === 'dark');
         
         // Update Toggle Button Text/Icon if needed (optional)
         const label = document.querySelector('.theme-label');
         if (label) {
-            label.textContent = mode === 'auto' ? '跟随系统' : (mode === 'dark' ? '深色模式' : '浅色模式');
+            label.textContent = mode === 'auto' ? 'Auto theme' : (mode === 'dark' ? 'Dark theme' : 'Light theme');
         }
     },
     
@@ -284,24 +283,22 @@ const Theme = {
         localStorage.setItem('tgstate_theme_pref', next);
         this.apply(next);
         
-        const modeNames = { 'auto': '跟随系统', 'light': '浅色模式', 'dark': '深色模式' };
-        Toast.show(`已切换到${modeNames[next]}`);
+        const modeNames = { 'auto': 'Auto theme', 'light': 'Light theme', 'dark': 'Dark theme' };
+        Toast.show(`Switched to ${modeNames[next]}`);
     }
 };
 
-// 初始化
+// Initialize shared UI behavior.
 document.addEventListener('DOMContentLoaded', () => {
     Theme.init();
-    
-    // 绑定主题切换按钮点击事件
+
+    // Bind theme switchers.
     document.querySelectorAll('.theme-toggle-btn').forEach(btn => {
         btn.addEventListener('click', (e) => {
             e.preventDefault();
             Theme.cycle();
         });
     });
-
-    // 侧边栏/移动端菜单切换
 
     const toggleBtn = document.querySelector('.menu-toggle');
     const sidebar = document.querySelector('.sidebar');

@@ -69,6 +69,46 @@ fn enrich_files(files: &[database::FileMetadata]) -> Vec<serde_json::Value> {
         .collect()
 }
 
+fn format_bytes(size: i64) -> String {
+    let size = size.max(0) as f64;
+    let units = ["B", "KB", "MB", "GB", "TB"];
+    let mut value = size;
+    let mut unit_idx = 0;
+
+    while value >= 1024.0 && unit_idx < units.len() - 1 {
+        value /= 1024.0;
+        unit_idx += 1;
+    }
+
+    if unit_idx == 0 {
+        format!("{} {}", value.round() as i64, units[unit_idx])
+    } else {
+        format!("{:.2} {}", value, units[unit_idx])
+    }
+}
+
+fn file_stats(files: &[database::FileMetadata], visible_count: usize) -> serde_json::Value {
+    let total_size: i64 = files.iter().map(|f| f.filesize).sum();
+    let image_exts = [
+        ".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".bmp", ".ico", ".tiff",
+    ];
+    let image_count = files
+        .iter()
+        .filter(|f| {
+            let name = f.filename.to_lowercase();
+            image_exts.iter().any(|ext| name.ends_with(ext))
+        })
+        .count();
+
+    serde_json::json!({
+        "total_count": files.len(),
+        "visible_count": visible_count,
+        "image_count": image_count,
+        "total_size": total_size,
+        "total_size_human": format_bytes(total_size),
+    })
+}
+
 fn render(state: &AppState, template: &str, ctx: &tera::Context) -> Response {
     match state.tera.render(template, ctx) {
         Ok(html) => Html(html).into_response(),
@@ -92,10 +132,12 @@ async fn index(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let cfg = page_cfg(&state);
     let files = database::get_all_files(&state.db_pool).unwrap_or_default();
     let enriched = enrich_files(&files);
+    let stats = file_stats(&files, enriched.len());
 
     let mut ctx = tera::Context::new();
     ctx.insert("cfg", &cfg);
     ctx.insert("files", &enriched);
+    ctx.insert("stats", &stats);
     ctx.insert("request_path", "/");
     render(&state, "index.html", &ctx)
 }
@@ -129,10 +171,12 @@ async fn image_hosting(State(state): State<Arc<AppState>>) -> impl IntoResponse 
         })
         .collect();
     let enriched = enrich_files(&images);
+    let stats = file_stats(&images, enriched.len());
 
     let mut ctx = tera::Context::new();
     ctx.insert("cfg", &cfg);
     ctx.insert("files", &enriched);
+    ctx.insert("stats", &stats);
     ctx.insert("request_path", "/image_hosting");
     render(&state, "image_hosting.html", &ctx)
 }

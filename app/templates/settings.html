@@ -1,125 +1,143 @@
 {% extends "base.html" %}
 
-{% block title %}设置 - tgState{% endblock %}
+{% block title %}Settings - tgState{% endblock %}
 
 {% block content %}
-<div style="max-width: 720px; margin: 0 auto;">
-    <div style="margin-bottom: 32px;">
-        <h1 style="font-size: 26px; font-weight: 800; margin-bottom: 6px;">系统设置</h1>
-        <p style="color: var(--text-secondary); font-size: 15px;">配置 Telegram 机器人与其他系统参数。</p>
+<div class="page-shell">
+    <section class="page-hero">
+        <div>
+            <div class="page-kicker">Admin</div>
+            <h1 class="page-title">Settings</h1>
+            <p class="page-subtitle">Configure Telegram access, public links, and PicGo upload credentials.</p>
+        </div>
+    </section>
+
+    <div class="settings-layout">
+        <aside class="card settings-nav">
+            <p class="settings-nav-title">Sections</p>
+            <a href="#security" class="settings-link active">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="1"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+                Security
+            </a>
+            <a href="#telegram" class="settings-link">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m22 2-7 20-4-9-9-4Z"></path><path d="M22 2 11 13"></path></svg>
+                Telegram
+            </a>
+            <a href="#links" class="settings-link">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><path d="M2 12h20"></path><path d="M12 2a15.3 15.3 0 0 1 0 20"></path><path d="M12 2a15.3 15.3 0 0 0 0 20"></path></svg>
+                Links
+            </a>
+            <a href="#advanced" class="settings-link">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 15.5A3.5 3.5 0 1 0 12 8a3.5 3.5 0 0 0 0 7.5Z"></path><path d="M19.4 15a1.8 1.8 0 0 0 .36 1.98l.04.04a2.2 2.2 0 0 1-3.12 3.12l-.04-.04a1.8 1.8 0 0 0-1.98-.36 1.8 1.8 0 0 0-1.1 1.66V21.5a2.2 2.2 0 1 1-4.4 0v-.1a1.8 1.8 0 0 0-1.1-1.66 1.8 1.8 0 0 0-1.98.36l-.04.04a2.2 2.2 0 0 1-3.12-3.12l.04-.04A1.8 1.8 0 0 0 3.34 15a1.8 1.8 0 0 0-1.66-1.1h-.1a2.2 2.2 0 1 1 0-4.4h.1a1.8 1.8 0 0 0 1.66-1.1 1.8 1.8 0 0 0-.36-1.98l-.04-.04a2.2 2.2 0 0 1 3.12-3.12l.04.04a1.8 1.8 0 0 0 1.98.36 1.8 1.8 0 0 0 1.1-1.66v-.1a2.2 2.2 0 1 1 4.4 0v.1a1.8 1.8 0 0 0 1.1 1.66 1.8 1.8 0 0 0 1.98-.36l.04-.04a2.2 2.2 0 0 1 3.12 3.12l-.04.04a1.8 1.8 0 0 0-.36 1.98 1.8 1.8 0 0 0 1.66 1.1h.1a2.2 2.2 0 1 1 0 4.4h-.1A1.8 1.8 0 0 0 19.4 15Z"></path></svg>
+                Advanced
+            </a>
+        </aside>
+
+        <form id="settings-form" class="settings-stack" onsubmit="return false;">
+            <section id="security" class="card">
+                <h2 class="settings-section-title">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="1"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+                    Account Security
+                </h2>
+                <div class="input-group" style="margin-bottom: 0;">
+                    <label class="input-label">Admin Password</label>
+                    <div style="position: relative;">
+                        <input type="password" class="input-field" name="PASS_WORD" id="PASS_WORD" placeholder="Leave blank to keep current password">
+                        <button type="button" onclick="togglePwd('PASS_WORD')" class="btn btn-ghost btn-icon" style="position:absolute;right:2px;top:2px;min-height:38px;width:38px;" aria-label="Toggle password visibility">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8Z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+                        </button>
+                    </div>
+                </div>
+            </section>
+
+            <section id="telegram" class="card">
+                <h2 class="settings-section-title">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m22 2-7 20-4-9-9-4Z"></path><path d="M22 2 11 13"></path></svg>
+                    Telegram
+                </h2>
+                <div class="input-group">
+                    <label class="input-label">Bot Token <span id="bot-token-badge" class="badge badge-success" style="display:none;">Configured</span></label>
+                    <input type="text" class="input-field" name="BOT_TOKEN" id="BOT_TOKEN" placeholder="123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11">
+                    <div class="text-sm text-muted mt-4">Create a bot from <a href="https://t.me/BotFather" target="_blank" class="link">@BotFather</a>. Leave blank to keep the current token.</div>
+                </div>
+                <div class="input-group" style="margin-bottom: 0;">
+                    <label class="input-label">Channel Name</label>
+                    <input type="text" class="input-field" name="CHANNEL_NAME" id="CHANNEL_NAME" placeholder="@my_channel or -100xxxxxxxx">
+                    <div class="text-sm text-muted mt-4">The bot must be an administrator of this channel.</div>
+                </div>
+            </section>
+
+            <section id="links" class="card">
+                <h2 class="settings-section-title">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><path d="M2 12h20"></path><path d="M12 2a15.3 15.3 0 0 1 0 20"></path><path d="M12 2a15.3 15.3 0 0 0 0 20"></path></svg>
+                    Link Settings
+                </h2>
+                <div class="input-group">
+                    <label class="input-label">Base URL</label>
+                    <div style="display: flex; gap: 8px;">
+                        <input type="text" class="input-field" name="BASE_URL" id="BASE_URL" placeholder="https://your-domain.example">
+                        <button type="button" class="btn btn-secondary" onclick="fillOrigin()" style="flex-shrink: 0;">Use Current</button>
+                    </div>
+                    <div class="text-sm text-muted mt-4">Used for generated share links and image URLs.</div>
+                </div>
+                <div class="input-group" style="margin-bottom: 0;">
+                    <label class="input-label">PicGo API Key <span id="picgo-key-badge" class="badge badge-success" style="display:none;">Configured</span></label>
+                    <div style="display: flex; gap: 8px;">
+                        <input type="text" class="input-field" name="PICGO_API_KEY" id="PICGO_API_KEY" placeholder="Leave blank to keep current key">
+                        <button type="button" class="btn btn-secondary" onclick="genKey()" style="flex-shrink: 0;">Generate</button>
+                    </div>
+                </div>
+            </section>
+
+            <section class="flex-between">
+                <button type="button" class="btn btn-ghost" onclick="toggleAdvanced()" style="color: var(--text-secondary);">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 15.5A3.5 3.5 0 1 0 12 8a3.5 3.5 0 0 0 0 7.5Z"></path><path d="M19.4 15a1.8 1.8 0 0 0 .36 1.98l.04.04a2.2 2.2 0 0 1-3.12 3.12l-.04-.04a1.8 1.8 0 0 0-1.98-.36"></path></svg>
+                    Advanced
+                </button>
+                <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                    <button type="button" class="btn btn-secondary" onclick="saveConfig(false)" id="btn-save">Save Only</button>
+                    <button type="button" class="btn btn-primary" onclick="saveConfig(true)" id="btn-finish">Save & Apply</button>
+                </div>
+            </section>
+
+            <section id="advanced-panel" class="hidden">
+                <div id="advanced" class="card">
+                    <h2 class="settings-section-title">Connection Tests</h2>
+                    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:20px;">
+                        <button type="button" class="btn btn-secondary btn-sm" onclick="testBot()" id="btn-test-bot">Test Bot Token</button>
+                        <button type="button" class="btn btn-secondary btn-sm" onclick="testChannel()" id="btn-test-ch">Test Channel</button>
+                    </div>
+                    <div class="danger-zone" style="padding:16px;border:1px solid color-mix(in srgb, var(--danger-color) 24%, transparent);">
+                        <h3 style="font-size:14px;font-weight:800;color:var(--danger-color);margin:0 0 12px;">Danger Zone</h3>
+                        <button type="button" class="btn btn-secondary" style="color: var(--danger-color); border-color: color-mix(in srgb, var(--danger-color) 50%, transparent);" onclick="resetConfig()">Reset All Settings</button>
+                    </div>
+                </div>
+            </section>
+        </form>
     </div>
-
-    <form id="settings-form" onsubmit="return false;">
-        <!-- 账号安全 -->
-        <div class="card" style="padding: 28px;">
-            <h2 style="font-size: 15px; font-weight: 700; margin-bottom: 20px; display: flex; align-items: center; gap: 10px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-secondary);">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
-                账号安全
-            </h2>
-            <div class="input-group" style="margin-bottom: 0;">
-                <label class="input-label">管理员密码</label>
-                <div style="position: relative;">
-                    <input type="password" class="input-field" name="PASS_WORD" id="PASS_WORD" placeholder="留空则不修改">
-                    <button type="button" onclick="togglePwd('PASS_WORD')" style="position: absolute; right: 12px; top: 50%; transform: translateY(-50%); color: var(--text-tertiary); padding: 4px;">
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
-                    </button>
-                </div>
-            </div>
-        </div>
-
-        <!-- Telegram 配置 -->
-        <div class="card" style="padding: 28px;">
-            <h2 style="font-size: 15px; font-weight: 700; margin-bottom: 20px; display: flex; align-items: center; gap: 10px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-secondary);">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
-                Telegram 配置
-            </h2>
-            <div class="input-group">
-                <label class="input-label">Bot Token <span id="bot-token-badge" class="badge badge-success" style="display:none; margin-left: 8px; font-size: 11px;">已配置</span></label>
-                <input type="text" class="input-field" name="BOT_TOKEN" id="BOT_TOKEN" placeholder="123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11">
-                <div class="text-sm text-muted mt-4">从 <a href="https://t.me/BotFather" target="_blank" style="color: var(--primary-color);">@BotFather</a> 获取。留空则保持当前配置。</div>
-            </div>
-            <div class="input-group" style="margin-bottom: 0;">
-                <label class="input-label">Channel Name</label>
-                <input type="text" class="input-field" name="CHANNEL_NAME" id="CHANNEL_NAME" placeholder="@my_channel 或 -100xxxxxxxx">
-                <div class="text-sm text-muted mt-4">机器人必须是该频道的管理员。</div>
-            </div>
-        </div>
-
-        <!-- 连接设置 -->
-        <div class="card" style="padding: 28px;">
-            <h2 style="font-size: 15px; font-weight: 700; margin-bottom: 20px; display: flex; align-items: center; gap: 10px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-secondary);">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
-                连接设置
-            </h2>
-            <div class="input-group">
-                <label class="input-label">Base URL</label>
-                <div style="display: flex; gap: 8px;">
-                    <input type="text" class="input-field" name="BASE_URL" id="BASE_URL" placeholder="http://your-domain.com">
-                    <button type="button" class="btn btn-secondary" onclick="fillOrigin()" style="flex-shrink: 0;">使用当前</button>
-                </div>
-                <div class="text-sm text-muted mt-4">用于生成分享链接和图片地址。</div>
-            </div>
-            <div class="input-group" style="margin-bottom: 0;">
-                <label class="input-label">PicGo API Key <span id="picgo-key-badge" class="badge badge-success" style="display:none; margin-left: 8px; font-size: 11px;">已配置</span></label>
-                <div style="display: flex; gap: 8px;">
-                    <input type="text" class="input-field" name="PICGO_API_KEY" id="PICGO_API_KEY" placeholder="留空则保持当前配置">
-                    <button type="button" class="btn btn-secondary" onclick="genKey()" style="flex-shrink: 0;">生成</button>
-                </div>
-            </div>
-        </div>
-
-        <!-- 操作按钮 -->
-        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 24px;">
-            <button type="button" class="btn btn-ghost" onclick="toggleAdvanced()" style="color: var(--text-tertiary);">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82V9"></path></svg>
-                高级选项
-            </button>
-            <div style="display: flex; gap: 12px;">
-                <button type="button" class="btn btn-secondary" onclick="saveConfig(false)" id="btn-save">仅保存</button>
-                <button type="button" class="btn btn-primary" onclick="saveConfig(true)" id="btn-finish">保存并应用</button>
-            </div>
-        </div>
-
-        <!-- 高级选项面板 -->
-        <div id="advanced-panel" class="hidden" style="margin-bottom: 48px;">
-            <div class="card" style="padding: 28px;">
-                <h3 style="font-size: 14px; font-weight: 700; margin-bottom: 16px;">连接测试</h3>
-                <div style="display: flex; gap: 12px; margin-bottom: 24px;">
-                    <button type="button" class="btn btn-secondary btn-sm" onclick="testBot()" id="btn-test-bot">测试 Bot Token</button>
-                    <button type="button" class="btn btn-secondary btn-sm" onclick="testChannel()" id="btn-test-ch">测试频道</button>
-                </div>
-                <div style="border-top: 1px solid var(--border-color); padding-top: 20px; margin-top: 20px;">
-                    <h3 style="font-size: 14px; font-weight: 700; color: var(--danger-color); margin-bottom: 12px;">危险区域</h3>
-                    <button type="button" class="btn" style="color: var(--danger-color); border: 1px solid var(--danger-color);" onclick="resetConfig()">重置所有配置</button>
-                </div>
-            </div>
-        </div>
-    </form>
 </div>
 
 <script>
-let configState = {}; // Store loaded config state
+let configState = {};
 
 function initData() {
     fetch('/api/app-config')
         .then(r => r.json())
         .then(data => {
             configState = data.cfg || {};
-            // Populate fields
             const channelEl = document.getElementsByName('CHANNEL_NAME')[0];
             if (channelEl) channelEl.value = configState.CHANNEL_NAME || '';
 
             const baseUrlEl = document.getElementsByName('BASE_URL')[0];
             if (baseUrlEl) baseUrlEl.value = configState.BASE_URL || '';
 
-            // Show badges for set-but-hidden fields
             if (configState.BOT_TOKEN_SET) {
                 document.getElementById('bot-token-badge').style.display = 'inline-flex';
-                document.getElementById('BOT_TOKEN').placeholder = '已配置，留空保持不变';
+                document.getElementById('BOT_TOKEN').placeholder = 'Configured. Leave blank to keep current token';
             }
             if (configState.PICGO_API_KEY_SET) {
                 document.getElementById('picgo-key-badge').style.display = 'inline-flex';
-                document.getElementById('PICGO_API_KEY').placeholder = '已配置，留空保持不变';
+                document.getElementById('PICGO_API_KEY').placeholder = 'Configured. Leave blank to keep current key';
             }
         });
 }
@@ -151,7 +169,6 @@ async function saveConfig(apply = false) {
     const form = document.getElementById('settings-form');
     const data = Object.fromEntries(new FormData(form));
 
-    // Don't send empty sensitive fields — keeps existing values in DB
     if (!data.PASS_WORD) delete data.PASS_WORD;
     if (!data.BOT_TOKEN) delete data.BOT_TOKEN;
     if (!data.PICGO_API_KEY) delete data.PICGO_API_KEY;
@@ -166,13 +183,13 @@ async function saveConfig(apply = false) {
         const json = await res.json();
 
         if (res.ok) {
-            Toast.show(apply ? '配置已保存并应用' : '配置已保存');
+            Toast.show(apply ? 'Settings saved and applied' : 'Settings saved');
             if (apply) setTimeout(() => location.reload(), 1000);
         } else {
-            Toast.show(json.detail?.message || '保存失败', 'error');
+            Toast.show(json.detail?.message || 'Save failed', 'error');
         }
     } catch (e) {
-        Toast.show('网络错误', 'error');
+        Toast.show('Network error', 'error');
     } finally {
         Utils.setLoading(btn, false);
     }
@@ -190,12 +207,12 @@ async function testBot() {
         });
         const json = await res.json();
         if (json.ok) {
-            Toast.show('Bot 验证成功: @' + json.result.username);
+            Toast.show('Bot verified: @' + json.result.username);
         } else {
-            Toast.show(json.message || '验证失败', 'error');
+            Toast.show(json.message || 'Verification failed', 'error');
         }
     } catch (e) {
-        Toast.show('请求失败', 'error');
+        Toast.show('Request failed', 'error');
     } finally { Utils.setLoading(btn, false); }
 }
 
@@ -212,22 +229,22 @@ async function testChannel() {
         });
         const json = await res.json();
         if (json.available) {
-            Toast.show('频道验证成功');
+            Toast.show('Channel verified');
         } else {
-            Toast.show(json.message || '频道不可用', 'error');
+            Toast.show(json.message || 'Channel unavailable', 'error');
         }
     } catch (e) {
-        Toast.show('请求失败', 'error');
+        Toast.show('Request failed', 'error');
     } finally { Utils.setLoading(btn, false); }
 }
 
 async function resetConfig() {
-    const confirmed = await Modal.confirm('重置配置', '确定要重置所有配置吗？此操作不可撤销，并将强制退出登录。');
+    const confirmed = await Modal.confirm('Reset settings', 'Reset all settings? This cannot be undone and will sign you out.');
     if (!confirmed) return;
     fetch('/api/reset-config', { method: 'POST' })
         .then(r => r.json())
         .then(() => {
-            Toast.show('重置完成，正在跳转...');
+            Toast.show('Reset complete. Redirecting...');
             setTimeout(() => window.location.href = '/welcome', 1000);
         });
 }

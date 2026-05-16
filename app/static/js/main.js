@@ -7,6 +7,44 @@ document.addEventListener('DOMContentLoaded', () => {
     const searchInput = document.getElementById('file-search');
     
     // --- Copy Link Delegation ---
+    function resolveItemUrl(item) {
+        if (!item) return '';
+
+        let url = '';
+        const downloadLink = item.querySelector('a[href^="/d/"]');
+        if (downloadLink && downloadLink.href) {
+            url = downloadLink.href;
+        }
+
+        if (!url) {
+            const img = item.querySelector('img[src^="/d/"]');
+            if (img && img.src) {
+                url = img.src;
+            }
+        }
+
+        if (!url) {
+            const dsUrl = item.dataset.fileUrl;
+            if (dsUrl && dsUrl !== 'undefined') {
+                url = dsUrl.startsWith('/') ? window.location.origin + dsUrl : dsUrl;
+            }
+        }
+
+        if (!url || url.includes('undefined')) {
+            const shortId = item.dataset.shortId;
+            const fileId = item.dataset.fileId;
+            const id = (shortId && shortId !== 'None' && shortId !== '') ? shortId : fileId;
+            url = window.location.origin + `/d/${id}`;
+        }
+
+        if (url.includes('undefined')) {
+            console.warn('Constructed URL contained undefined, falling back to raw fileId');
+            url = window.location.origin + '/d/' + (item.dataset.fileId || 'error');
+        }
+
+        return url;
+    }
+
     document.addEventListener('click', (e) => {
         const btn = e.target.closest('.copy-link-btn');
         if (!btn) return;
@@ -18,61 +56,35 @@ document.addEventListener('DOMContentLoaded', () => {
         const item = btn.closest('.file-item, .image-card');
         if (!item) return; // Should exist
         
-        // 如果按钮上有 onclick 属性（旧代码或特殊情况），优先执行 onclick，这里不处理
+        // Inline handlers keep priority for any special legacy cases.
         if (btn.hasAttribute('onclick')) return;
 
         const shortId = item.dataset.shortId;
         const fileId = item.dataset.fileId;
         const filename = item.dataset.filename;
         
-        // 核心策略：优先从 DOM 中获取真实可用的绝对 URL
-        let url = '';
-
-        // 1. 尝试获取下载按钮的链接 (文件列表模式)
-        // 查找 href 以 /d/ 开头的 a 标签
-        const downloadLink = item.querySelector('a[href^="/d/"]');
-        if (downloadLink && downloadLink.href) {
-            url = downloadLink.href;
-        }
-        
-        // 2. 尝试获取图片的 src (图床模式)
-        if (!url) {
-            const img = item.querySelector('img[src^="/d/"]');
-            if (img && img.src) {
-                url = img.src;
-            }
-        }
-
-        // 3. Fallback: 使用 dataset 中的 fileUrl (如果存在且非空且不是 undefined 字符串)
-        if (!url) {
-            const dsUrl = item.dataset.fileUrl;
-            if (dsUrl && dsUrl !== 'undefined') {
-                url = dsUrl;
-                // 确保是绝对路径
-                if (url.startsWith('/')) {
-                    url = window.location.origin + url;
-                }
-            }
-        }
-        
-        // 4. Final Fallback: 构造 /d/{id}
-        if (!url || url.includes('undefined')) {
-             const id = (shortId && shortId !== 'None' && shortId !== '') ? shortId : fileId;
-             url = window.location.origin + `/d/${id}`;
-        }
-        
-        // 安全检查：如果最终结果包含 undefined，强制重构
-        if (url.includes('undefined')) {
-            // 最后的兜底，哪怕 fileId 也是 undefined (极低概率)，也比 http://...undefined 好
-             console.warn('Constructed URL contained undefined, falling back to raw fileId');
-             url = window.location.origin + '/d/' + (fileId || 'error');
-        }
+        const url = resolveItemUrl(item);
 
         if (window.copyLink) {
              Utils.copy(url);
         } else {
              Utils.copy(url);
         }
+    });
+
+    document.addEventListener('click', (e) => {
+        const card = e.target.closest('.image-card');
+        if (!card) return;
+        if (e.target.closest('button, a, input, label')) return;
+        Utils.copy(resolveItemUrl(card));
+    });
+
+    document.addEventListener('keydown', (e) => {
+        if (e.key !== 'Enter' && e.key !== ' ') return;
+        const card = e.target.closest('.image-card');
+        if (!card || e.target.closest('button, a, input, label')) return;
+        e.preventDefault();
+        Utils.copy(resolveItemUrl(card));
     });
 
     // --- Search Functionality ---
@@ -164,22 +176,22 @@ document.addEventListener('DOMContentLoaded', () => {
             const xhr = new XMLHttpRequest();
             xhr.open('POST', '/api/upload', true);
             const fileId = `temp-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
+            const safeFileName = escapeHtml(file.name);
 
-            // Initial Progress UI
-            // 使用新版 UI 风格
+            // Initial progress UI.
             const progressHTML = `
-                <div class="card" id="progress-${fileId}" style="padding: 16px; margin-bottom: 12px; border: 1px solid var(--border-color);">
+                <div class="card" id="progress-${fileId}" style="padding: 16px;">
                     <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
-                        <span style="font-size: 14px; font-weight: 500;">${file.name}</span>
+                        <span style="font-size: 14px; font-weight: 700;">${safeFileName}</span>
                         <span class="percent" style="font-size: 12px; color: var(--text-secondary);">0%</span>
                     </div>
-                    <div style="height: 4px; background: var(--bg-surface-hover); border-radius: 2px; overflow: hidden;">
-                        <div class="progress-bar" style="width: 0%; height: 100%; background: var(--primary-color); transition: width 0.2s;"></div>
+                    <div class="progress-bar">
+                        <div class="progress-fill" style="width: 0%;"></div>
                     </div>
                 </div>`;
             
             if (progressArea) progressArea.insertAdjacentHTML('beforeend', progressHTML);
-            const progressEl = document.querySelector(`#progress-${fileId} .progress-bar`);
+            const progressEl = document.querySelector(`#progress-${fileId} .progress-fill`);
             const percentEl = document.querySelector(`#progress-${fileId} .percent`);
 
             xhr.upload.onprogress = ({ loaded, total }) => {
@@ -195,24 +207,26 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (xhr.status === 200) {
                     const response = JSON.parse(xhr.responseText);
                     const fileUrl = response.url;
+                    const safeFileUrl = escapeHtml(fileUrl);
+                    const jsFileUrl = escapeJsString(fileUrl);
                     
                     // Success Toast
-                    if (window.Toast) Toast.show(`${file.name} 上传成功`);
+                    if (window.Toast) Toast.show(`${file.name} uploaded`);
                     
                     // Add to done area
                     const successHTML = `
-                        <div class="card" style="padding: 16px; margin-bottom: 12px; border-left: 4px solid var(--success-color);">
+                        <div class="card" style="padding: 16px; border-left: 4px solid var(--success-color);">
                             <div style="display: flex; justify-content: space-between; align-items: center;">
                                 <div style="overflow: hidden; margin-right: 12px;">
-                                    <div style="font-size: 14px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${file.name}</div>
-                                    <a href="${fileUrl}" target="_blank" style="font-size: 12px; color: var(--primary-color);">${fileUrl}</a>
+                                    <div style="font-size: 14px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${safeFileName}</div>
+                                    <a href="${safeFileUrl}" target="_blank" style="font-size: 12px; color: var(--primary-color);">${safeFileUrl}</a>
                                 </div>
-                                <button class="btn btn-secondary btn-sm" onclick="Utils.copy('${fileUrl}')">复制</button>
+                                <button class="btn btn-secondary btn-sm" onclick="Utils.copy('${jsFileUrl}')">Copy</button>
                             </div>
                         </div>`;
                     if (doneArea) doneArea.insertAdjacentHTML('afterbegin', successHTML);
                 } else {
-                    let errorMsg = "上传失败";
+                    let errorMsg = "Upload failed";
                     try {
                         const parsed = JSON.parse(xhr.responseText);
                         const detail = parsed && parsed.detail;
@@ -233,7 +247,7 @@ document.addEventListener('DOMContentLoaded', () => {
             xhr.onerror = () => {
                 const progressRow = document.getElementById(`progress-${fileId}`);
                 if (progressRow) progressRow.remove();
-                if (window.Toast) Toast.show('网络错误', 'error');
+                if (window.Toast) Toast.show('Network error', 'error');
                 resolve();
             };
 
@@ -254,7 +268,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const checked = document.querySelectorAll('.file-checkbox:checked');
         const count = checked.length;
         
-        if (selectionCounter) selectionCounter.textContent = count > 0 ? `${count} 项已选` : '0 项已选';
+        if (selectionCounter) selectionCounter.textContent = count > 0 ? `${count} selected` : '0 selected';
         
         if (batchActionsBar) {
             if (count > 0) {
@@ -306,13 +320,13 @@ document.addEventListener('DOMContentLoaded', () => {
                 const item = cb.closest('.file-item, .image-card');
                 let url = '';
 
-                // 1. 尝试获取下载按钮
+                // 1. Download link.
                 const downloadLink = item.querySelector('a[href^="/d/"]');
                 if (downloadLink && downloadLink.href) {
                     url = downloadLink.href;
                 }
                 
-                // 2. 尝试获取图片 src
+                // 2. Image src.
                 if (!url) {
                     const img = item.querySelector('img[src^="/d/"]');
                     if (img && img.src) {
@@ -356,7 +370,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const checked = document.querySelectorAll('.file-checkbox:checked');
             if (checked.length === 0) return;
 
-            const confirmed = await Modal.confirm('批量删除', `确定要删除选中的 ${checked.length} 个文件吗？`);
+            const confirmed = await Modal.confirm('Batch delete', `Delete ${checked.length} selected files?`);
             if (!confirmed) return;
 
             const fileIds = Array.from(checked).map(cb => cb.dataset.fileId);
@@ -373,7 +387,7 @@ document.addEventListener('DOMContentLoaded', () => {
                          const id = item.details?.file_id || item; 
                          removeFileElement(id);
                     });
-                    if (window.Toast) Toast.show(`已删除 ${data.deleted.length} 个文件`);
+                    if (window.Toast) Toast.show(`Deleted ${data.deleted.length} files`);
                 }
                 updateBatchControls();
             });
@@ -419,6 +433,20 @@ document.addEventListener('DOMContentLoaded', () => {
         return s.split(' ')[0].split('T')[0];
     }
 
+    function escapeHtml(value) {
+        return String(value ?? '').replace(/[&<>"']/g, (ch) => ({
+            '&': '&amp;',
+            '<': '&lt;',
+            '>': '&gt;',
+            '"': '&quot;',
+            "'": '&#39;'
+        })[ch]);
+    }
+
+    function escapeJsString(value) {
+        return String(value ?? '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    }
+
     function addNewFileElement(file) {
         const isGridView = document.querySelector('.image-grid') !== null;
         const container = document.getElementById('file-list-disk');
@@ -430,54 +458,62 @@ document.addEventListener('DOMContentLoaded', () => {
         const formattedSize = (file.filesize / (1024 * 1024)).toFixed(2) + " MB";
         const formattedDate = formatDateValue(file.upload_date);
         const safeId = file.file_id.replace(':', '-');
+        const safeFileId = escapeHtml(file.file_id);
+        const safeShortId = escapeHtml(file.short_id || '');
+        const safeFilename = escapeHtml(file.filename);
         
-        // URL construction: Always use /d/{file_id} (short_id preferred)
-        // 回滚：只使用 /d/{id} 格式，不再拼接文件名或 slug
+        // URL construction: always use /d/{id}, preferring short IDs.
         let fileUrl = `/d/${file.short_id || file.file_id}`;
+        const safeFileUrl = escapeHtml(fileUrl);
 
         let html = '';
         if (isGridView) {
              html = `
-                <div class="file-item" style="border: 1px solid var(--border-color); border-radius: var(--radius-md); overflow: hidden; background: var(--bg-body);" id="file-item-${safeId}" data-file-id="${file.file_id}" data-file-url="${fileUrl}" data-filename="${file.filename}" data-short-id="${file.short_id || ''}">
-                    <div style="position: relative; aspect-ratio: 16/9; background: #000;">
-                        <img src="${fileUrl}" loading="lazy" style="width: 100%; height: 100%; object-fit: contain;" alt="${file.filename}">
-                        <div style="position: absolute; top: 8px; left: 8px;">
-                            <input type="checkbox" class="file-checkbox" data-file-id="${file.file_id}" style="width: 16px; height: 16px; cursor: pointer;">
+                <div class="file-item image-card" id="file-item-${safeId}" data-file-id="${safeFileId}" data-file-url="${safeFileUrl}" data-filename="${safeFilename}" data-short-id="${safeShortId}" role="button" tabindex="0" title="Copy direct image link">
+                    <div class="image-thumb">
+                        <img src="${safeFileUrl}" loading="lazy" alt="${safeFilename}">
+                        <div class="image-check">
+                            <input type="checkbox" class="file-checkbox" data-file-id="${safeFileId}" aria-label="Select ${safeFilename}">
                         </div>
                     </div>
-                    <div style="padding: 12px;">
-                        <div class="text-sm font-medium" style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 4px;" title="${file.filename}">${file.filename}</div>
-                        <div class="text-sm text-muted" style="margin-bottom: 12px;">${formattedSize}</div>
-                        <div style="display: flex; gap: 8px;">
-                            <button class="btn btn-secondary btn-sm copy-link-btn" style="flex: 1; height: 32px;">复制</button>
-                            <button class="btn btn-secondary btn-sm delete" style="height: 32px; color: var(--danger-color);" onclick="deleteFile('${file.file_id}')">
-                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                    <div class="image-info">
+                        <span class="file-title" title="${safeFilename}">${safeFilename}</span>
+                        <span class="file-subtitle">${formattedSize} · ${formattedDate}</span>
+                        <div class="image-actions">
+                            <button class="btn btn-secondary btn-sm copy-link-btn">Copy</button>
+                            <button class="btn btn-secondary btn-sm delete" style="color: var(--danger-color);" onclick="deleteFile('${safeFileId}')" aria-label="Delete ${safeFilename}">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18"></path><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
                             </button>
                         </div>
                     </div>
                 </div>`;
         } else {
             html = `
-                <tr class="file-item" style="border-bottom: 1px solid var(--border-color);" id="file-item-${safeId}" data-file-id="${file.file_id}" data-file-url="${fileUrl}" data-filename="${file.filename}" data-short-id="${file.short_id || ''}">
-                    <td style="padding: 12px 16px;"><input type="checkbox" class="file-checkbox" data-file-id="${file.file_id}"></td>
-                    <td style="padding: 12px 16px;">
-                        <div style="display: flex; align-items: center; gap: 8px;">
-                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color: var(--primary-color);"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"></path><polyline points="13 2 13 9 20 9"></polyline></svg>
-                            <span class="text-sm font-medium" style="color: var(--text-primary);">${file.filename}</span>
+                <tr class="file-item" id="file-item-${safeId}" data-file-id="${safeFileId}" data-file-url="${safeFileUrl}" data-filename="${safeFilename}" data-short-id="${safeShortId}">
+                    <td><input type="checkbox" class="file-checkbox" data-file-id="${safeFileId}" aria-label="Select ${safeFilename}"></td>
+                    <td>
+                        <div class="file-name-cell">
+                            <span class="file-icon">
+                                <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><path d="M14 2v6h6"></path></svg>
+                            </span>
+                            <span style="min-width: 0;">
+                                <span class="file-title">${safeFilename}</span>
+                                <span class="file-subtitle">${safeFileUrl}</span>
+                            </span>
                         </div>
                     </td>
-                    <td style="padding: 12px 16px;" class="text-sm text-muted">${formattedSize}</td>
-                    <td style="padding: 12px 16px;" class="text-sm text-muted">${formattedDate}</td>
-                    <td style="padding: 12px 16px; text-align: right;">
-                        <div style="display: flex; justify-content: flex-end; gap: 8px;">
-                            <a href="${fileUrl}" class="btn btn-ghost" style="padding: 4px 8px; height: 28px;" title="下载">
-                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                    <td class="text-muted">${formattedSize}</td>
+                    <td class="text-muted">${formattedDate}</td>
+                    <td style="text-align: right;">
+                        <div class="row-actions">
+                            <a href="${safeFileUrl}" class="btn btn-ghost" title="Download" aria-label="Download ${safeFilename}">
+                                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><path d="m7 10 5 5 5-5"></path><path d="M12 15V3"></path></svg>
                             </a>
-                            <button class="btn btn-ghost copy-link-btn" style="padding: 4px 8px; height: 28px;" title="复制链接">
-                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                            <button class="btn btn-ghost copy-link-btn" title="Copy link" aria-label="Copy ${safeFilename} link">
+                                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="1"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                             </button>
-                            <button class="btn btn-ghost delete" style="padding: 4px 8px; height: 28px; color: var(--danger-color);" onclick="deleteFile('${file.file_id}')" title="删除">
-                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                            <button class="btn btn-ghost delete" style="color: var(--danger-color);" onclick="deleteFile('${safeFileId}')" title="Delete" aria-label="Delete ${safeFilename}">
+                                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18"></path><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
                             </button>
                         </div>
                     </td>
@@ -489,7 +525,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // --- Global Helpers ---
     window.deleteFile = async (fileId) => {
-        const confirmed = await Modal.confirm('删除文件', '确定要删除此文件吗？');
+        const confirmed = await Modal.confirm('Delete file', 'Delete this file?');
         if (!confirmed) return;
         fetch(`/api/files/${fileId}`, { method: 'DELETE' })
             .then(async (res) => {
@@ -500,10 +536,10 @@ document.addEventListener('DOMContentLoaded', () => {
             .then(({ ok, data }) => {
                 if (ok && data && data.status === 'ok') {
                     removeFileElement(fileId);
-                    if (window.Toast) Toast.show('文件已删除');
+                    if (window.Toast) Toast.show('File deleted');
                     updateBatchControls();
                 } else {
-                    const msg = data?.detail?.message || data?.message || '删除失败';
+                    const msg = data?.detail?.message || data?.message || 'Delete failed';
                     if (window.Toast) Toast.show(msg, 'error');
                 }
             });
@@ -522,13 +558,13 @@ document.addEventListener('DOMContentLoaded', () => {
             if (isGridView) {
                  container.innerHTML = `
                     <div style="grid-column: 1/-1; padding: 40px; text-align: center; color: var(--text-tertiary);">
-                        <p>暂无图片</p>
+                        <p>No images</p>
                     </div>`;
             } else {
                  container.innerHTML = `
                     <tr>
                         <td colspan="5" style="padding: 48px; text-align: center;">
-                            <div class="text-muted">暂无文件</div>
+                            <div class="text-muted">No files</div>
                         </td>
                     </tr>`;
             }
