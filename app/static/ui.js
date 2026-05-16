@@ -189,20 +189,32 @@ const Utils = {
                 width: 90%; max-width: 320px; text-align: center;
                 box-shadow: var(--shadow-float);
             `;
-            content.innerHTML = `
-                <p style="margin-bottom: 12px; font-weight: 700; color: var(--text-primary);">Copy failed. Copy manually:</p>
-                <div style="background: var(--bg-body); padding: 8px; border-radius: 6px; margin-bottom: 16px; border: 1px solid var(--border-color);">
-                    <div style="word-break: break-all; font-family: monospace; font-size: 13px; color: var(--text-primary); user-select: text;">${text}</div>
-                </div>
-                <button class="btn btn-primary" style="width: 100%;">Close</button>
-            `;
+            const title = document.createElement('p');
+            title.textContent = 'Copy failed. Copy manually:';
+            title.style.cssText = 'margin-bottom: 12px; font-weight: 700; color: var(--text-primary);';
+
+            const textWrap = document.createElement('div');
+            textWrap.style.cssText = 'background: var(--bg-body); padding: 8px; border-radius: 6px; margin-bottom: 16px; border: 1px solid var(--border-color);';
+
+            const textValue = document.createElement('div');
+            textValue.textContent = text;
+            textValue.style.cssText = 'word-break: break-all; font-family: monospace; font-size: 13px; color: var(--text-primary); user-select: text;';
+            textWrap.appendChild(textValue);
+
+            const closeButton = document.createElement('button');
+            closeButton.className = 'btn btn-primary';
+            closeButton.style.width = '100%';
+            closeButton.textContent = 'Close';
+
+            content.appendChild(title);
+            content.appendChild(textWrap);
+            content.appendChild(closeButton);
             modal.appendChild(content);
             document.body.appendChild(modal);
             
-            const closeBtn = content.querySelector('button');
             const close = () => modal.remove();
             
-            closeBtn.onclick = close;
+            closeButton.onclick = close;
             modal.onclick = (e) => { if(e.target === modal) close(); };
         } catch (e) {}
         

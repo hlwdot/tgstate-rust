@@ -50,13 +50,17 @@ impl TelegramService {
             .client
             .post(&url)
             .json(&serde_json::json!({"file_id": file_id}))
-            .timeout(std::time::Duration::from_secs(constants::HTTP_TIMEOUT_METADATA_SECS))
+            .timeout(std::time::Duration::from_secs(
+                constants::HTTP_TIMEOUT_METADATA_SECS,
+            ))
             .send()
             .await
             .map_err(|e| format!("getFile request failed: {}", e))?;
 
-        let data: TelegramResponse<TelegramFile> =
-            resp.json().await.map_err(|e| format!("Parse error: {}", e))?;
+        let data: TelegramResponse<TelegramFile> = resp
+            .json()
+            .await
+            .map_err(|e| format!("Parse error: {}", e))?;
 
         if data.ok {
             if let Some(file) = data.result {
@@ -99,12 +103,11 @@ impl TelegramService {
             .send()
             .await?;
 
-        let data: TelegramResponse<Message> = resp
-            .json()
-            .await?;
+        let data: TelegramResponse<Message> = resp.json().await?;
 
         if data.ok {
-            data.result.ok_or_else(|| AppErrorKind::Telegram("No result in response".into()))
+            data.result
+                .ok_or_else(|| AppErrorKind::Telegram("No result in response".into()))
         } else {
             Err(AppErrorKind::Telegram(format!(
                 "sendDocument error: {}",
@@ -122,7 +125,9 @@ impl TelegramService {
                 "chat_id": self.channel_name,
                 "message_id": message_id
             }))
-            .timeout(std::time::Duration::from_secs(constants::HTTP_TIMEOUT_METADATA_SECS))
+            .timeout(std::time::Duration::from_secs(
+                constants::HTTP_TIMEOUT_METADATA_SECS,
+            ))
             .send()
             .await
         {
@@ -147,6 +152,20 @@ impl TelegramService {
     }
 
     pub async fn delete_file_with_chunks(&self, file_id: &str) -> DeleteResult {
+        self.delete_file_with_chunks_if_manifest(file_id, true)
+            .await
+    }
+
+    pub async fn delete_regular_file(&self, file_id: &str) -> DeleteResult {
+        self.delete_file_with_chunks_if_manifest(file_id, false)
+            .await
+    }
+
+    async fn delete_file_with_chunks_if_manifest(
+        &self,
+        file_id: &str,
+        allow_manifest: bool,
+    ) -> DeleteResult {
         let mut result = DeleteResult {
             main_file_id: file_id.to_string(),
             ..Default::default()
@@ -170,45 +189,49 @@ impl TelegramService {
         };
         let actual_file_id = parts[1];
 
-        // Check if manifest
-        if let Ok(Some(url)) = self.get_download_url(actual_file_id).await {
-            if let Ok(resp) = self.client.get(&url).send().await {
-                if let Ok(body) = resp.bytes().await {
-                    if body.starts_with(b"tgstate-blob\n") {
-                        result.is_manifest = true;
-                        let content = String::from_utf8_lossy(&body);
-                        let lines: Vec<&str> = content.lines().collect();
+        // Check if manifest only for DB records known to be system-generated
+        // large uploads. A regular user file may legitimately start with the
+        // same bytes and must not be interpreted as a deletion manifest.
+        if allow_manifest {
+            if let Ok(Some(url)) = self.get_download_url(actual_file_id).await {
+                if let Ok(resp) = self.client.get(&url).send().await {
+                    if let Ok(body) = resp.bytes().await {
+                        if body.starts_with(b"tgstate-blob\n") {
+                            result.is_manifest = true;
+                            let content = String::from_utf8_lossy(&body);
+                            let lines: Vec<&str> = content.lines().collect();
 
-                        if lines.len() >= 3 {
-                            let chunk_ids: Vec<String> =
-                                lines[2..].iter().map(|s| s.to_string()).collect();
+                            if lines.len() >= 3 {
+                                let chunk_ids: Vec<String> =
+                                    lines[2..].iter().map(|s| s.to_string()).collect();
 
-                            // Concurrent delete with semaphore
-                            let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(10));
-                            let mut handles = Vec::new();
+                                // Concurrent delete with semaphore
+                                let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(10));
+                                let mut handles = Vec::new();
 
-                            for cid in chunk_ids {
-                                let sem = sem.clone();
-                                let tg = self.clone();
-                                handles.push(tokio::spawn(async move {
-                                    let _permit = sem.acquire().await;
-                                    let parts: Vec<&str> = cid.splitn(2, ':').collect();
-                                    if parts.len() == 2 {
-                                        if let Ok(mid) = parts[0].parse::<i64>() {
-                                            let (ok, _) = tg.delete_message(mid).await;
-                                            return (cid, ok);
+                                for cid in chunk_ids {
+                                    let sem = sem.clone();
+                                    let tg = self.clone();
+                                    handles.push(tokio::spawn(async move {
+                                        let _permit = sem.acquire().await;
+                                        let parts: Vec<&str> = cid.splitn(2, ':').collect();
+                                        if parts.len() == 2 {
+                                            if let Ok(mid) = parts[0].parse::<i64>() {
+                                                let (ok, _) = tg.delete_message(mid).await;
+                                                return (cid, ok);
+                                            }
                                         }
-                                    }
-                                    (cid, false)
-                                }));
-                            }
+                                        (cid, false)
+                                    }));
+                                }
 
-                            for handle in handles {
-                                if let Ok((cid, ok)) = handle.await {
-                                    if ok {
-                                        result.deleted_chunks.push(cid);
-                                    } else {
-                                        result.failed_chunks.push(cid);
+                                for handle in handles {
+                                    if let Ok((cid, ok)) = handle.await {
+                                        if ok {
+                                            result.deleted_chunks.push(cid);
+                                        } else {
+                                            result.failed_chunks.push(cid);
+                                        }
                                     }
                                 }
                             }
@@ -256,7 +279,9 @@ impl TelegramService {
         let resp = self
             .client
             .get(&url)
-            .timeout(std::time::Duration::from_secs(constants::HTTP_TIMEOUT_METADATA_SECS))
+            .timeout(std::time::Duration::from_secs(
+                constants::HTTP_TIMEOUT_METADATA_SECS,
+            ))
             .send()
             .await
             .map_err(|e| format!("Download manifest failed: {}", e))?;

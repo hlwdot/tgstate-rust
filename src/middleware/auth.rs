@@ -1,6 +1,6 @@
 use axum::body::Body;
 use axum::extract::State;
-use axum::http::{HeaderMap, HeaderValue, Request, StatusCode};
+use axum::http::{HeaderMap, HeaderValue, Method, Request, StatusCode};
 use axum::middleware::Next;
 use axum::response::Response;
 use std::sync::Arc;
@@ -77,14 +77,103 @@ fn is_https(headers: &HeaderMap) -> bool {
         .map_or(false, |v| v == "https")
 }
 
-fn load_settings_snapshot(
-    state: &Arc<AppState>,
-) -> (Option<String>, Option<String>) {
+fn reject_csrf() -> Response {
+    let mut resp = Response::new(Body::from(
+        serde_json::json!({
+            "status": "error",
+            "code": "csrf_failed",
+            "message": "请求来源不匹配"
+        })
+        .to_string(),
+    ));
+    *resp.status_mut() = StatusCode::FORBIDDEN;
+    resp.headers_mut().insert(
+        axum::http::header::CONTENT_TYPE,
+        "application/json; charset=utf-8".parse().unwrap(),
+    );
+    resp
+}
+
+fn is_state_changing(method: &Method) -> bool {
+    !matches!(
+        *method,
+        Method::GET | Method::HEAD | Method::OPTIONS | Method::TRACE
+    )
+}
+
+fn forwarded_proto(headers: &HeaderMap) -> &str {
+    headers
+        .get("x-forwarded-proto")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.split(',').next())
+        .map(str::trim)
+        .filter(|v| *v == "http" || *v == "https")
+        .unwrap_or("http")
+}
+
+fn request_host(headers: &HeaderMap) -> Option<&str> {
+    headers
+        .get("x-forwarded-host")
+        .or_else(|| headers.get(axum::http::header::HOST))
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.split(',').next())
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+}
+
+fn expected_origin(headers: &HeaderMap) -> Option<String> {
+    request_host(headers).map(|host| format!("{}://{}", forwarded_proto(headers), host))
+}
+
+fn normalize_origin(value: &str) -> Option<String> {
+    let value = value.trim().trim_end_matches('/');
+    if value.starts_with("http://") || value.starts_with("https://") {
+        Some(value.to_string())
+    } else {
+        None
+    }
+}
+
+fn referer_origin(value: &str) -> Option<String> {
+    let value = value.trim();
+    let scheme_end = value.find("://")?;
+    let authority_start = scheme_end + 3;
+    let path_start = value[authority_start..]
+        .find('/')
+        .map(|idx| authority_start + idx)
+        .unwrap_or(value.len());
+    normalize_origin(&value[..path_start])
+}
+
+fn csrf_origin_allowed(headers: &HeaderMap) -> bool {
+    let expected = match expected_origin(headers) {
+        Some(v) => v,
+        None => return false,
+    };
+
+    if let Some(origin) = headers
+        .get(axum::http::header::ORIGIN)
+        .and_then(|v| v.to_str().ok())
+    {
+        return normalize_origin(origin).as_deref() == Some(expected.as_str());
+    }
+
+    if let Some(referer) = headers
+        .get(axum::http::header::REFERER)
+        .and_then(|v| v.to_str().ok())
+    {
+        return referer_origin(referer).as_deref() == Some(expected.as_str());
+    }
+
+    // Non-browser API clients often omit both headers. Cross-site browser
+    // writes include Origin on modern browsers, and those are enforced above.
+    true
+}
+
+fn load_settings_snapshot(state: &Arc<AppState>) -> (Option<String>, Option<String>) {
     let settings = config::get_app_settings(&state.settings, &state.db_pool);
     let active_pwd = config::get_active_password(&state.settings, &state.db_pool);
-    let session_token = settings
-        .get("SESSION_TOKEN")
-        .and_then(|v| v.clone());
+    let session_token = settings.get("SESSION_TOKEN").and_then(|v| v.clone());
     (active_pwd, session_token)
 }
 
@@ -112,14 +201,14 @@ pub async fn auth_middleware(
     next: Next,
 ) -> Response {
     let path = req.uri().path().to_string();
+    let state_changing = is_state_changing(req.method());
+
+    if state_changing && !csrf_origin_allowed(req.headers()) {
+        return reject_csrf();
+    }
 
     // Always-allowed static paths
-    let public_static_prefixes = [
-        "/static/",
-        "/assets/",
-        "/favicon",
-        "/robots.txt",
-    ];
+    let public_static_prefixes = ["/static/", "/assets/", "/favicon", "/robots.txt"];
     if public_static_prefixes.iter().any(|p| path.starts_with(p)) {
         return next.run(req).await;
     }
@@ -128,17 +217,17 @@ pub async fn auth_middleware(
     // routes: short download links, legacy download links, and share pages.
     // Shared files are meant to be reachable by guests without an account,
     // so they must be allowed regardless of whether a password is configured.
-    let public_content_prefixes = [
-        "/d/",
-        "/share/",
-    ];
+    let public_content_prefixes = ["/d/", "/share/"];
     if public_content_prefixes.iter().any(|p| path.starts_with(p)) {
         return next.run(req).await;
     }
 
     // Always-allowed API paths (regardless of password state)
     let always_public = ["/api/health"];
-    if always_public.iter().any(|p| &path == p || path.starts_with(&format!("{}/", p))) {
+    if always_public
+        .iter()
+        .any(|p| &path == p || path.starts_with(&format!("{}/", p)))
+    {
         return next.run(req).await;
     }
 
@@ -199,9 +288,7 @@ pub async fn auth_middleware(
         let token = session_token.as_deref().unwrap_or("").to_string();
         let mut resp = next.run(req).await;
         if !token.is_empty() {
-            if let Ok(cookie_val) =
-                HeaderValue::from_str(&auth::build_cookie(&token, secure))
-            {
+            if let Ok(cookie_val) = HeaderValue::from_str(&auth::build_cookie(&token, secure)) {
                 resp.headers_mut()
                     .append(axum::http::header::SET_COOKIE, cookie_val);
             }
@@ -210,4 +297,37 @@ pub async fn auth_middleware(
     }
 
     redirect_or_401(&path, wants_html(&headers))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::csrf_origin_allowed;
+    use axum::http::{header, HeaderMap, HeaderValue};
+
+    fn headers(host: &str, origin: Option<&str>) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        headers.insert(header::HOST, HeaderValue::from_str(host).unwrap());
+        if let Some(origin) = origin {
+            headers.insert(header::ORIGIN, HeaderValue::from_str(origin).unwrap());
+        }
+        headers
+    }
+
+    #[test]
+    fn csrf_allows_matching_origin() {
+        let headers = headers("127.0.0.1:8000", Some("http://127.0.0.1:8000"));
+        assert!(csrf_origin_allowed(&headers));
+    }
+
+    #[test]
+    fn csrf_rejects_cross_origin() {
+        let headers = headers("127.0.0.1:8000", Some("https://evil.example"));
+        assert!(!csrf_origin_allowed(&headers));
+    }
+
+    #[test]
+    fn csrf_allows_non_browser_clients_without_origin_headers() {
+        let headers = headers("127.0.0.1:8000", None);
+        assert!(csrf_origin_allowed(&headers));
+    }
 }

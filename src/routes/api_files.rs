@@ -102,11 +102,20 @@ fn chunk_download_failed_response(chunk_id: &str) -> Response {
     .into_response()
 }
 
+fn is_system_manifest(filesize: i64) -> bool {
+    filesize as usize >= crate::constants::TELEGRAM_CHUNK_SIZE
+}
+
+fn delete_as_manifest(meta: &database::FileMetadata) -> bool {
+    is_system_manifest(meta.filesize)
+}
+
 async fn serve_file(
     state: &AppState,
     tg_service: &TelegramService,
     file_id: &str,
     filename: &str,
+    filesize: i64,
     headers: &HeaderMap,
     force_download: bool,
     is_head: bool,
@@ -162,31 +171,25 @@ async fn serve_file(
         }
     };
 
-    // Check if manifest
-    if peek_bytes.starts_with(b"tgstate-blob\n") {
+    // Check if manifest. Only files recorded as large system-generated
+    // uploads are eligible; a normal user file that happens to start with the
+    // magic header must still be served as its own content.
+    if is_system_manifest(filesize) && peek_bytes.starts_with(b"tgstate-blob\n") {
         // Download full manifest
         let full_resp = match client.get(&download_url).send().await {
             Ok(r) => r,
             Err(e) => {
                 tracing::error!("下载清单失败: {}", e);
-                return http_error(
-                    StatusCode::BAD_GATEWAY,
-                    "下载文件失败",
-                    "download_error",
-                )
-                .into_response();
+                return http_error(StatusCode::BAD_GATEWAY, "下载文件失败", "download_error")
+                    .into_response();
             }
         };
         let manifest_bytes = match full_resp.bytes().await {
             Ok(b) => b,
             Err(e) => {
                 tracing::error!("读取清单失败: {}", e);
-                return http_error(
-                    StatusCode::BAD_GATEWAY,
-                    "读取文件失败",
-                    "read_error",
-                )
-                .into_response();
+                return http_error(StatusCode::BAD_GATEWAY, "读取文件失败", "read_error")
+                    .into_response();
             }
         };
 
@@ -403,6 +406,7 @@ async fn download_file_short(
                 &tg_service,
                 &f.file_id,
                 &f.filename,
+                f.filesize,
                 &headers,
                 force_download,
                 is_head,
@@ -436,6 +440,7 @@ async fn download_file_short_head(
                 &tg_service,
                 &f.file_id,
                 &f.filename,
+                f.filesize,
                 &headers,
                 force_download,
                 true,
@@ -471,6 +476,7 @@ async fn download_file_legacy(
         &tg_service,
         &meta.file_id,
         &meta.filename,
+        meta.filesize,
         &headers,
         force_download,
         false,
@@ -503,6 +509,7 @@ async fn download_file_legacy_head(
         &tg_service,
         &meta.file_id,
         &meta.filename,
+        meta.filesize,
         &headers,
         force_download,
         true,
@@ -526,10 +533,20 @@ async fn delete_file(
 
     tracing::info!("正在删除文件: {}", file_id);
 
-    let result = tg_service.delete_file_with_chunks(&file_id).await;
+    let meta = match database::get_file_by_id(&state.db_pool, &file_id) {
+        Ok(Some(f)) => f,
+        _ => return http_error(StatusCode::NOT_FOUND, "文件未找到", "not_found").into_response(),
+    };
+
+    let result = if delete_as_manifest(&meta) {
+        tg_service.delete_file_with_chunks(&meta.file_id).await
+    } else {
+        tg_service.delete_regular_file(&meta.file_id).await
+    };
 
     if result.main_message_deleted {
-        let db_deleted = database::delete_file_metadata(&state.db_pool, &file_id).unwrap_or(false);
+        let db_deleted =
+            database::delete_file_metadata(&state.db_pool, &meta.file_id).unwrap_or(false);
         let db_status = if db_deleted {
             "deleted"
         } else {
@@ -561,7 +578,8 @@ async fn delete_file(
     }
 
     // TG deletion failed, try force-delete from DB
-    let force_deleted = database::delete_file_metadata(&state.db_pool, &file_id).unwrap_or(false);
+    let force_deleted =
+        database::delete_file_metadata(&state.db_pool, &meta.file_id).unwrap_or(false);
     if force_deleted {
         return Json(serde_json::json!({
             "status": "ok",
@@ -607,13 +625,24 @@ async fn batch_delete_files(
     let mut failed = Vec::new();
 
     for fid in &payload.file_ids {
-        let result = tg_service.delete_file_with_chunks(fid).await;
+        let meta = match database::get_file_by_id(&state.db_pool, fid) {
+            Ok(Some(f)) => f,
+            _ => {
+                failed.push(fid.clone());
+                continue;
+            }
+        };
+        let result = if delete_as_manifest(&meta) {
+            tg_service.delete_file_with_chunks(&meta.file_id).await
+        } else {
+            tg_service.delete_regular_file(&meta.file_id).await
+        };
         if result.main_message_deleted {
-            database::delete_file_metadata(&state.db_pool, fid).ok();
+            database::delete_file_metadata(&state.db_pool, &meta.file_id).ok();
             deleted.push(fid.clone());
         } else {
             // Try force delete from DB
-            if database::delete_file_metadata(&state.db_pool, fid).unwrap_or(false) {
+            if database::delete_file_metadata(&state.db_pool, &meta.file_id).unwrap_or(false) {
                 deleted.push(fid.clone());
             } else {
                 failed.push(fid.clone());

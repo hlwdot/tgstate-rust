@@ -32,10 +32,7 @@ fn page_cfg(state: &AppState) -> serde_json::Value {
     }
 
     // Check bot running state synchronously - use try_lock
-    let bot_running = state
-        .bot_state
-        .try_lock()
-        .map_or(false, |b| b.bot_running);
+    let bot_running = state.bot_state.try_lock().map_or(false, |b| b.bot_running);
 
     serde_json::json!({
         "bot_ready": bot_ready,
@@ -129,6 +126,16 @@ async fn welcome(State(state): State<Arc<AppState>>) -> impl IntoResponse {
 }
 
 async fn index(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    if config::get_active_password(&state.settings, &state.db_pool)
+        .as_deref()
+        .unwrap_or("")
+        .trim()
+        .is_empty()
+    {
+        let ctx = tera::Context::new();
+        return render(&state, "welcome.html", &ctx);
+    }
+
     let cfg = page_cfg(&state);
     let files = database::get_all_files(&state.db_pool).unwrap_or_default();
     let enriched = enrich_files(&files);
@@ -200,8 +207,11 @@ async fn share_page(
                 .as_deref()
                 .filter(|s| !s.is_empty())
                 .unwrap_or(&f.file_id);
-            let filename_encoded =
-                percent_encoding::utf8_percent_encode(&f.filename, percent_encoding::NON_ALPHANUMERIC).to_string();
+            let filename_encoded = percent_encoding::utf8_percent_encode(
+                &f.filename,
+                percent_encoding::NON_ALPHANUMERIC,
+            )
+            .to_string();
             let relative_url = format!("/d/{}/{}", display_id, filename_encoded);
             let file_url = if base_url.is_empty() {
                 relative_url.clone()
