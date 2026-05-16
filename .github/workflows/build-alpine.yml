@@ -1,0 +1,38 @@
+name: Build Alpine binary
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build tgState for Alpine x86_64
+    runs-on: ubuntu-latest
+    container: rust:1-alpine
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: apk add --no-cache build-base musl-dev pkgconf openssl-dev openssl-libs-static
+
+      - name: Build
+        env:
+          OPENSSL_STATIC: "1"
+        run: cargo build --release --locked
+
+      - name: Package
+        run: |
+          mkdir -p dist/tgstate
+          cp target/release/tgstate dist/tgstate/
+          cp -r app dist/tgstate/
+          cp .env.example dist/tgstate/
+          cd dist
+          tar czf tgstate-alpine-x86_64.tar.gz tgstate
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tgstate-alpine-x86_64
+          path: dist/tgstate-alpine-x86_64.tar.gz
+          retention-days: 7
