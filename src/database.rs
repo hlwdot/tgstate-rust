@@ -427,9 +427,12 @@ pub fn get_auth_session(pool: &DbPool, token: &str) -> Result<Option<AuthSession
 
     match result {
         Ok(session) => {
+            let expires_at = (Utc::now()
+                + Duration::seconds(crate::auth::session_max_age_secs() as i64))
+            .to_rfc3339();
             conn.execute(
-                "UPDATE auth_sessions SET last_seen = CURRENT_TIMESTAMP WHERE token = ?1",
-                params![token],
+                "UPDATE auth_sessions SET last_seen = CURRENT_TIMESTAMP, expires_at = ?2 WHERE token = ?1",
+                params![token, expires_at],
             )
             .ok();
             Ok(Some(session))
@@ -462,4 +465,54 @@ fn cleanup_expired_auth_rows_with_conn(conn: &rusqlite::Connection) -> Result<()
         params![now],
     )?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{get_auth_session, init_db, insert_auth_session};
+    use chrono::{Duration, Utc};
+    use rusqlite::params;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn test_pool() -> super::DbPool {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let data_dir = std::env::temp_dir()
+            .join(format!("tgstate-db-test-{}", unique))
+            .to_string_lossy()
+            .to_string();
+        init_db(&data_dir)
+    }
+
+    #[test]
+    fn get_auth_session_extends_database_expiry() {
+        let pool = test_pool();
+        let token = "test-token";
+        insert_auth_session(&pool, token, "subject", None, None, 60).unwrap();
+
+        let old_expiry = (Utc::now() + Duration::seconds(1)).to_rfc3339();
+        pool.get()
+            .unwrap()
+            .execute(
+                "UPDATE auth_sessions SET expires_at = ?2 WHERE token = ?1",
+                params![token, old_expiry],
+            )
+            .unwrap();
+
+        let session = get_auth_session(&pool, token).unwrap();
+        assert!(session.is_some());
+
+        let new_expiry: String = pool
+            .get()
+            .unwrap()
+            .query_row(
+                "SELECT expires_at FROM auth_sessions WHERE token = ?1",
+                params![token],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(new_expiry > old_expiry);
+    }
 }

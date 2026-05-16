@@ -688,11 +688,13 @@ async fn batch_delete_files(
         } else {
             tg_service.delete_regular_file(&meta.file_id).await
         };
-        if result.main_message_deleted {
+        if result.main_message_deleted && result.failed_chunks.is_empty() {
             if database::delete_file_metadata(&state.db_pool, &meta.file_id).unwrap_or(false) {
                 publish_delete_event(&state, &meta.file_id);
             }
             deleted.push(fid.clone());
+        } else if result.main_message_deleted {
+            failed.push(fid.clone());
         } else {
             // Try force delete from DB
             if database::delete_file_metadata(&state.db_pool, &meta.file_id).unwrap_or(false) {

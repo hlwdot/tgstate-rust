@@ -75,17 +75,32 @@ async fn upload_file(
         state.http_client.clone(),
     );
 
-    while let Ok(Some(field)) = multipart.next_field().await {
-        let name = field.name().unwrap_or("").to_string();
-        if name == "file" {
-            let raw_filename = field.file_name().unwrap_or("upload").to_string();
-            let filename = sanitize_filename(&raw_filename);
+    loop {
+        let field = match multipart.next_field().await {
+            Ok(Some(field)) => field,
+            Ok(None) => break,
+            Err(e) => {
+                tracing::warn!("Failed to parse upload request: {}", e);
+                return Err(http_error(
+                    axum::http::StatusCode::BAD_REQUEST,
+                    "Malformed upload request",
+                    "multipart_error",
+                ));
+            }
+        };
 
-            // Stream the file in chunks to Telegram
-            upload_result = Some(
-                stream_upload_to_telegram(&tg_service, field, &filename, &state.db_pool).await,
-            );
+        let name = field.name().unwrap_or("").to_string();
+        if name != "file" {
+            continue;
         }
+
+        let raw_filename = field.file_name().unwrap_or("upload").to_string();
+        let filename = sanitize_filename(&raw_filename);
+
+        // Stream the file in chunks to Telegram.
+        upload_result =
+            Some(stream_upload_to_telegram(&tg_service, field, &filename, &state.db_pool).await);
+        break;
     }
 
     let short_id = upload_result
@@ -121,11 +136,21 @@ async fn stream_upload_to_telegram(
     let mut buffer = BytesMut::with_capacity(chunk_size);
     let mut total_size: usize = 0;
     let mut chunk_ids: Vec<String> = Vec::new();
+    let mut uploaded_message_ids: Vec<i64> = Vec::new();
     let mut first_message_id: Option<i64> = None;
     let mut chunk_num: u32 = 0;
 
     // Read field data incrementally
-    while let Ok(Some(bytes)) = field.chunk().await {
+    loop {
+        let bytes = match field.chunk().await {
+            Ok(Some(bytes)) => bytes,
+            Ok(None) => break,
+            Err(e) => {
+                cleanup_uploaded_messages(tg_service, &uploaded_message_ids).await;
+                return Err(format!("Failed to read upload data: {}", e));
+            }
+        };
+
         buffer.extend_from_slice(&bytes);
         total_size += bytes.len();
 
@@ -133,17 +158,28 @@ async fn stream_upload_to_telegram(
         while buffer.len() >= chunk_size {
             chunk_num += 1;
             let chunk_data = buffer.split_to(chunk_size).freeze().to_vec();
-            let chunk_name = format!("{}.part{}", filename, chunk_num);
+            let chunk_name = chunk_filename(filename, chunk_num);
 
-            let message = tg_service
-                .send_document_raw(chunk_data, &chunk_name, first_message_id)
-                .await?;
+            let message = send_document_with_cleanup(
+                tg_service,
+                &mut uploaded_message_ids,
+                chunk_data,
+                &chunk_name,
+                first_message_id,
+            )
+            .await?;
 
             if first_message_id.is_none() {
                 first_message_id = Some(message.message_id);
             }
 
-            let doc = message.document.ok_or("No document in chunk response")?;
+            let doc = match message.document {
+                Some(doc) => doc,
+                None => {
+                    cleanup_uploaded_messages(tg_service, &uploaded_message_ids).await;
+                    return Err("No document in chunk response".into());
+                }
+            };
             chunk_ids.push(format!("{}:{}", message.message_id, doc.file_id));
         }
     }
@@ -155,16 +191,37 @@ async fn stream_upload_to_telegram(
 
     if chunk_ids.is_empty() {
         // Small file: single upload (no chunks were sent yet)
-        tracing::info!("直接上传文件: {} ({}字节)", filename, total_size);
+        tracing::info!(
+            "Uploading file directly: {} ({} bytes)",
+            filename,
+            total_size
+        );
         let data = buffer.freeze().to_vec();
-        let message = tg_service.send_document_raw(data, filename, None).await?;
+        let message =
+            send_document_with_cleanup(tg_service, &mut uploaded_message_ids, data, filename, None)
+                .await?;
 
-        let doc = message.document.ok_or("No document in response")?;
+        let doc = match message.document {
+            Some(doc) => doc,
+            None => {
+                cleanup_uploaded_messages(tg_service, &uploaded_message_ids).await;
+                return Err("No document in response".into());
+            }
+        };
         let composite_id = format!("{}:{}", message.message_id, doc.file_id);
 
-        let short_id =
-            database::add_file_metadata(db_pool, filename, &composite_id, total_size as i64)
-                .map_err(|e| e.to_string())?;
+        let short_id = match database::add_file_metadata(
+            db_pool,
+            filename,
+            &composite_id,
+            total_size as i64,
+        ) {
+            Ok(short_id) => short_id,
+            Err(e) => {
+                cleanup_uploaded_messages(tg_service, &uploaded_message_ids).await;
+                return Err(e.to_string());
+            }
+        };
         return Ok(short_id);
     }
 
@@ -172,15 +229,24 @@ async fn stream_upload_to_telegram(
     if !buffer.is_empty() {
         chunk_num += 1;
         let chunk_data = buffer.freeze().to_vec();
-        let chunk_name = format!("{}.part{}", filename, chunk_num);
+        let chunk_name = chunk_filename(filename, chunk_num);
 
-        let message = tg_service
-            .send_document_raw(chunk_data, &chunk_name, first_message_id)
-            .await?;
+        let message = send_document_with_cleanup(
+            tg_service,
+            &mut uploaded_message_ids,
+            chunk_data,
+            &chunk_name,
+            first_message_id,
+        )
+        .await?;
 
-        let doc = message
-            .document
-            .ok_or("No document in last chunk response")?;
+        let doc = match message.document {
+            Some(doc) => doc,
+            None => {
+                cleanup_uploaded_messages(tg_service, &uploaded_message_ids).await;
+                return Err("No document in last chunk response".into());
+            }
+        };
         chunk_ids.push(format!("{}:{}", message.message_id, doc.file_id));
     }
 
@@ -201,17 +267,78 @@ async fn stream_upload_to_telegram(
     }
 
     let manifest_name = format!("{}.manifest", filename);
-    let message = tg_service
-        .send_document_raw(manifest.into_bytes(), &manifest_name, first_message_id)
-        .await?;
+    let message = send_document_with_cleanup(
+        tg_service,
+        &mut uploaded_message_ids,
+        manifest.into_bytes(),
+        &manifest_name,
+        first_message_id,
+    )
+    .await?;
 
-    let doc = message.document.ok_or("No document in manifest response")?;
+    let doc = match message.document {
+        Some(doc) => doc,
+        None => {
+            cleanup_uploaded_messages(tg_service, &uploaded_message_ids).await;
+            return Err("No document in manifest response".into());
+        }
+    };
     let manifest_composite = format!("{}:{}", message.message_id, doc.file_id);
 
-    let short_id =
-        database::add_file_metadata(db_pool, filename, &manifest_composite, total_size as i64)
-            .map_err(|e| e.to_string())?;
+    let short_id = match database::add_file_metadata(
+        db_pool,
+        filename,
+        &manifest_composite,
+        total_size as i64,
+    ) {
+        Ok(short_id) => short_id,
+        Err(e) => {
+            cleanup_uploaded_messages(tg_service, &uploaded_message_ids).await;
+            return Err(e.to_string());
+        }
+    };
     Ok(short_id)
+}
+
+async fn send_document_with_cleanup(
+    tg_service: &TelegramService,
+    uploaded_message_ids: &mut Vec<i64>,
+    data: Vec<u8>,
+    filename: &str,
+    reply_to: Option<i64>,
+) -> Result<crate::telegram::types::Message, String> {
+    match tg_service.send_document_raw(data, filename, reply_to).await {
+        Ok(message) => {
+            uploaded_message_ids.push(message.message_id);
+            Ok(message)
+        }
+        Err(e) => {
+            cleanup_uploaded_messages(tg_service, uploaded_message_ids).await;
+            Err(e)
+        }
+    }
+}
+
+fn chunk_filename(filename: &str, chunk_num: u32) -> String {
+    format!(
+        "{}{}{}",
+        filename,
+        constants::TELEGRAM_CHUNK_FILENAME_MARKER,
+        chunk_num
+    )
+}
+
+async fn cleanup_uploaded_messages(tg_service: &TelegramService, message_ids: &[i64]) {
+    for message_id in message_ids.iter().rev() {
+        let (ok, reason) = tg_service.delete_message(*message_id).await;
+        if !ok {
+            tracing::warn!(
+                "Failed to clean up partial upload message: message_id={}, reason={}",
+                message_id,
+                reason
+            );
+        }
+    }
 }
 
 pub fn router() -> Router<Arc<AppState>> {
@@ -286,6 +413,18 @@ mod tests {
             .unwrap()
     }
 
+    fn malformed_multipart_request() -> Request<Body> {
+        Request::builder()
+            .method("POST")
+            .uri("/api/upload")
+            .header(
+                header::CONTENT_TYPE,
+                "multipart/form-data; boundary=X-BOUNDARY",
+            )
+            .body(Body::from("--wrong-boundary\r\nbroken"))
+            .unwrap()
+    }
+
     #[tokio::test]
     async fn upload_route_rejects_missing_file_field() {
         let state = test_state();
@@ -293,6 +432,20 @@ mod tests {
             .merge(super::router())
             .with_state(state.clone());
         let response = app.oneshot(multipart_request_without_file()).await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+        let files = database::get_all_files(&state.db_pool).unwrap();
+        assert!(files.is_empty(), "unexpected files persisted: {:?}", files);
+    }
+
+    #[tokio::test]
+    async fn upload_route_rejects_malformed_multipart() {
+        let state = test_state();
+        let app = Router::new()
+            .merge(super::router())
+            .with_state(state.clone());
+        let response = app.oneshot(malformed_multipart_request()).await.unwrap();
 
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 

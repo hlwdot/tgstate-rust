@@ -188,7 +188,7 @@ async fn handle_new_file(
     // Telegram limit (`TELEGRAM_CHUNK_SIZE`) has to have been uploaded via
     // the multi-part / manifest flow, which the bot-side ingestion path
     // does not know how to reconstruct.
-    if file_size as usize >= constants::TELEGRAM_CHUNK_SIZE || file_name.ends_with(".manifest") {
+    if should_skip_file_sync(&file_name, file_size) {
         return;
     }
 
@@ -219,6 +219,12 @@ async fn handle_new_file(
             tracing::error!("添加文件元数据失败: {}", e);
         }
     }
+}
+
+fn should_skip_file_sync(file_name: &str, file_size: i64) -> bool {
+    file_size as usize >= constants::TELEGRAM_CHUNK_SIZE
+        || file_name.ends_with(".manifest")
+        || file_name.contains(constants::TELEGRAM_CHUNK_FILENAME_MARKER)
 }
 
 async fn handle_get_reply(
@@ -338,4 +344,29 @@ async fn send_message(
         .await
         .map_err(|e| sanitize_bot_token_in_text(&e.to_string(), bot_token))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_skip_file_sync;
+    use crate::constants;
+
+    #[test]
+    fn bot_sync_skips_internal_chunk_files() {
+        assert!(should_skip_file_sync("video.mp4.tgstate-part3", 1024));
+    }
+
+    #[test]
+    fn bot_sync_keeps_regular_small_part_named_files() {
+        assert!(!should_skip_file_sync("archive.part3", 1024));
+    }
+
+    #[test]
+    fn bot_sync_skips_large_files_and_manifests() {
+        assert!(should_skip_file_sync(
+            "large.bin",
+            constants::TELEGRAM_CHUNK_SIZE as i64
+        ));
+        assert!(should_skip_file_sync("large.bin.manifest", 512));
+    }
 }

@@ -4,6 +4,11 @@ pub const MAX_UPLOAD_BODY_SIZE: usize = 512 * 1024 * 1024;
 /// Telegram chunk size for large file uploads (~19.5 MB, under Telegram's 20MB limit)
 pub const TELEGRAM_CHUNK_SIZE: usize = (19.5 * 1024.0 * 1024.0) as usize;
 
+/// Filename marker for internal Telegram chunk messages. Bot-side sync ignores
+/// files with this marker so the final small chunk of a large upload is not
+/// imported as a standalone user file.
+pub const TELEGRAM_CHUNK_FILENAME_MARKER: &str = ".tgstate-part";
+
 /// HTTP client timeout for file upload/download operations (seconds)
 pub const HTTP_TIMEOUT_TRANSFER_SECS: u64 = 300;
 
