@@ -268,33 +268,6 @@ pub fn delete_file_metadata(pool: &DbPool, file_id: &str) -> Result<bool, AppErr
     Ok(rows > 0)
 }
 
-pub fn delete_file_by_message_id(
-    pool: &DbPool,
-    message_id: i64,
-) -> Result<Option<String>, AppErrorKind> {
-    let conn = pool.get()?;
-    let pattern = format!("{}:%", message_id);
-
-    let file_id: Option<String> = conn
-        .query_row(
-            "SELECT file_id FROM files WHERE file_id LIKE ?1",
-            params![pattern],
-            |row| row.get(0),
-        )
-        .ok();
-
-    if let Some(ref fid) = file_id {
-        conn.execute("DELETE FROM files WHERE file_id = ?1", params![fid])?;
-        tracing::info!(
-            "已从数据库中删除与消息ID {} 关联的文件: {}",
-            message_id,
-            fid
-        );
-    }
-
-    Ok(file_id)
-}
-
 pub fn get_app_settings_from_db(
     pool: &DbPool,
 ) -> Result<HashMap<String, Option<String>>, AppErrorKind> {
@@ -306,7 +279,6 @@ pub fn get_app_settings_from_db(
             let mut map = HashMap::new();
             map.insert("BOT_TOKEN".to_string(), row.get::<_, Option<String>>(0)?);
             map.insert("CHANNEL_NAME".to_string(), row.get::<_, Option<String>>(1)?);
-            map.insert("PICGO_API_KEY".to_string(), row.get::<_, Option<String>>(3)?);
             map.insert("BASE_URL".to_string(), row.get::<_, Option<String>>(4)?);
             Ok(map)
         },
@@ -328,13 +300,16 @@ pub fn save_app_settings_to_db(
     payload: &HashMap<String, Option<String>>,
 ) -> Result<(), AppErrorKind> {
     let conn = pool.get()?;
+    // Keep the legacy `picgo_api_key` column in old databases but clear it on
+    // every settings save. PicGo upload support was removed; deleting the
+    // column would be a destructive migration for no runtime benefit.
     conn.execute(
         "UPDATE app_settings SET bot_token = ?1, channel_name = ?2, pass_word = ?3, picgo_api_key = ?4, base_url = ?5, session_token = ?6 WHERE id = 1",
         params![
             norm(payload.get("BOT_TOKEN").and_then(|v| v.as_deref())),
             norm(payload.get("CHANNEL_NAME").and_then(|v| v.as_deref())),
             Option::<String>::None,
-            norm(payload.get("PICGO_API_KEY").and_then(|v| v.as_deref())),
+            Option::<String>::None,
             norm(payload.get("BASE_URL").and_then(|v| v.as_deref())),
             Option::<String>::None,
         ],
@@ -346,7 +321,6 @@ pub fn reset_app_settings_in_db(pool: &DbPool) -> Result<(), AppErrorKind> {
     let mut payload = HashMap::new();
     payload.insert("BOT_TOKEN".to_string(), None);
     payload.insert("CHANNEL_NAME".to_string(), None);
-    payload.insert("PICGO_API_KEY".to_string(), None);
     payload.insert("BASE_URL".to_string(), None);
     save_app_settings_to_db(pool, &payload)
 }

@@ -8,7 +8,7 @@
         <div>
             <div class="page-kicker">Admin</div>
             <h1 class="page-title">Settings</h1>
-            <p class="page-subtitle">Configure Telegram access, public links, and PicGo upload credentials.</p>
+            <p class="page-subtitle">Configure Telegram access and public links.</p>
         </div>
     </section>
 
@@ -78,20 +78,13 @@
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><path d="M2 12h20"></path><path d="M12 2a15.3 15.3 0 0 1 0 20"></path><path d="M12 2a15.3 15.3 0 0 0 0 20"></path></svg>
                     Link Settings
                 </h2>
-                <div class="input-group">
+                <div class="input-group" style="margin-bottom: 0;">
                     <label class="input-label">Base URL</label>
                     <div style="display: flex; gap: 8px;">
                         <input type="text" class="input-field" name="BASE_URL" id="BASE_URL" placeholder="https://your-domain.example">
                         <button type="button" class="btn btn-secondary" onclick="fillOrigin()" style="flex-shrink: 0;">Use Current</button>
                     </div>
                     <div class="text-sm text-muted mt-4">Used for generated share links and image URLs.</div>
-                </div>
-                <div class="input-group" style="margin-bottom: 0;">
-                    <label class="input-label">PicGo API Key <span id="picgo-key-badge" class="badge badge-success" style="display:none;">Configured</span></label>
-                    <div style="display: flex; gap: 8px;">
-                        <input type="text" class="input-field" name="PICGO_API_KEY" id="PICGO_API_KEY" placeholder="Leave blank to keep current key">
-                        <button type="button" class="btn btn-secondary" onclick="genKey()" style="flex-shrink: 0;">Generate</button>
-                    </div>
                 </div>
             </section>
 
@@ -141,10 +134,6 @@ function initData() {
                 document.getElementById('bot-token-badge').style.display = 'inline-flex';
                 document.getElementById('BOT_TOKEN').placeholder = 'Configured. Leave blank to keep current token';
             }
-            if (configState.PICGO_API_KEY_SET) {
-                document.getElementById('picgo-key-badge').style.display = 'inline-flex';
-                document.getElementById('PICGO_API_KEY').placeholder = 'Configured. Leave blank to keep current key';
-            }
             document.getElementById('OIDC_ISSUER_URL').value = configState.OIDC_ISSUER_URL || '';
             document.getElementById('OIDC_CLIENT_ID').value = configState.OIDC_CLIENT_ID || '';
             const configuredBaseUrl = (configState.BASE_URL || window.location.origin).replace(/\/+$/, '');
@@ -160,13 +149,6 @@ function copyRedirectUri() {
     Utils.copy(document.getElementById('OIDC_REDIRECT_URL').value);
 }
 
-function genKey() {
-    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-    let r = '';
-    for (let i = 0; i < 32; i++) r += chars.charAt(Math.floor(Math.random() * chars.length));
-    document.getElementById('PICGO_API_KEY').value = r;
-}
-
 function toggleAdvanced() {
     document.getElementById('advanced-panel').classList.toggle('hidden');
 }
@@ -179,7 +161,6 @@ async function saveConfig(apply = false) {
     const data = Object.fromEntries(new FormData(form));
 
     if (!data.BOT_TOKEN) delete data.BOT_TOKEN;
-    if (!data.PICGO_API_KEY) delete data.PICGO_API_KEY;
 
     try {
         const url = apply ? '/api/app-config/apply' : '/api/app-config/save';

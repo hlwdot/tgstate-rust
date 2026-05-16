@@ -75,53 +75,6 @@ pub fn build_clear_cookie() -> String {
     )
 }
 
-/// Constant-time string comparison to prevent timing attacks.
-pub fn secure_compare(a: &str, b: &str) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    a.as_bytes()
-        .iter()
-        .zip(b.as_bytes().iter())
-        .fold(0u8, |acc, (x, y)| acc | (x ^ y))
-        == 0
-}
-
-/// Check upload auth. Returns Ok(()) if allowed, Err(status_code, message, code) if not.
-///
-/// `has_referer` is retained in the signature for call-site compatibility but no
-/// longer grants any access on its own. Browser session cookies are validated
-/// before upload reaches this function; this function only covers PicGo/API keys
-/// and the final "OIDC login required" decision.
-pub fn ensure_upload_auth(
-    _has_referer: bool,
-    picgo_api_key: Option<&str>,
-    oidc_required: bool,
-    submitted_key: Option<&str>,
-) -> Result<(), (u16, &'static str, &'static str)> {
-    let has_picgo = picgo_api_key.map_or(false, |k| !k.is_empty());
-
-    // Neither set: allow all. This only happens for first-run/local setups
-    // where OIDC is not configured and a PicGo key has not been set.
-    if !has_picgo && !oidc_required {
-        return Ok(());
-    }
-
-    if has_picgo {
-        if let Some(key) = submitted_key {
-            if secure_compare(key, picgo_api_key.unwrap()) {
-                return Ok(());
-            }
-        }
-    }
-
-    if oidc_required {
-        return Err((401, "需要网页登录", "login_required"));
-    }
-
-    Err((401, "无效的 API 密钥", "invalid_api_key"))
-}
-
 pub fn normalize_path_for_redirect(input: Option<&str>) -> String {
     let path = input.unwrap_or("/").trim();
     if !path.starts_with('/') || path.starts_with("//") || path.contains("://") {
@@ -143,31 +96,7 @@ pub fn normalize_path_for_redirect(input: Option<&str>) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{ensure_upload_auth, generate_session_token, normalize_path_for_redirect};
-
-    #[test]
-    fn oidc_only_api_request_without_session_is_rejected() {
-        let result = ensure_upload_auth(false, None, true, None);
-        match result {
-            Err((401, _, "login_required")) => {}
-            other => panic!("expected login_required rejection, got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn picgo_only_referer_only_request_is_rejected() {
-        let result = ensure_upload_auth(true, Some("secret"), false, None);
-        match result {
-            Err((401, _, "invalid_api_key")) => {}
-            other => panic!("expected invalid_api_key rejection, got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn picgo_key_allows_upload_even_when_oidc_is_required() {
-        let result = ensure_upload_auth(false, Some("secret"), true, Some("secret"));
-        assert_eq!(result, Ok(()));
-    }
+    use super::{generate_session_token, normalize_path_for_redirect};
 
     #[test]
     fn generate_session_token_is_64_hex_chars() {

@@ -3,7 +3,7 @@ use std::time::Duration;
 use crate::constants;
 use crate::database::{self, DbPool};
 use crate::events::{build_file_event, BroadcastEventBus};
-use crate::telegram::service::TelegramService;
+use crate::telegram::service::{sanitize_bot_token_in_text, TelegramService};
 use crate::telegram::types::*;
 
 pub async fn run_bot_polling(
@@ -22,11 +22,7 @@ pub async fn run_bot_polling(
     // Telegram call in the process.
     let client = http_client;
 
-    let tg_service = TelegramService::new(
-        bot_token.clone(),
-        channel_name.clone(),
-        client.clone(),
-    );
+    let tg_service = TelegramService::new(bot_token.clone(), channel_name.clone(), client.clone());
 
     let mut offset: i64 = 0;
 
@@ -88,12 +84,17 @@ async fn get_updates(
         .json(&serde_json::json!({
             "offset": offset,
             "timeout": timeout,
-            "allowed_updates": ["message", "channel_post", "edited_message", "edited_channel_post"]
+            "allowed_updates": ["message", "channel_post"]
         }))
         .timeout(Duration::from_secs(timeout as u64 + 10))
         .send()
         .await
-        .map_err(|e| format!("Request error: {}", e))?;
+        .map_err(|e| {
+            format!(
+                "Request error: {}",
+                sanitize_bot_token_in_text(&e.to_string(), bot_token)
+            )
+        })?;
 
     let data: TelegramResponse<Vec<Update>> = resp
         .json()
@@ -132,16 +133,10 @@ async fn process_update(
         }
     }
 
-    // Handle edited/deleted messages
-    let edited = update
-        .edited_message
-        .as_ref()
-        .or(update.edited_channel_post.as_ref());
-    if let Some(msg) = edited {
-        if msg.text.is_none() && msg.document.is_none() && msg.photo.is_none() {
-            handle_deleted_message(msg, db_pool, event_bus).await;
-        }
-    }
+    // Telegram Bot API getUpdates does not provide ordinary channel message
+    // deletion events. Deletes initiated from this app are handled by the API
+    // routes that perform them; external channel deletes cannot be inferred
+    // reliably from edited_* updates.
 }
 
 fn message_from_configured_channel(message: &Message, channel_name: &str) -> bool {
@@ -170,7 +165,9 @@ async fn handle_new_file(
     let (file_id, file_name, file_size) = if let Some(doc) = &message.document {
         (
             doc.file_id.clone(),
-            doc.file_name.clone().unwrap_or_else(|| format!("file_{}", message.message_id)),
+            doc.file_name
+                .clone()
+                .unwrap_or_else(|| format!("file_{}", message.message_id)),
             doc.file_size.unwrap_or(0),
         )
     } else if let Some(photos) = &message.photo {
@@ -191,9 +188,7 @@ async fn handle_new_file(
     // Telegram limit (`TELEGRAM_CHUNK_SIZE`) has to have been uploaded via
     // the multi-part / manifest flow, which the bot-side ingestion path
     // does not know how to reconstruct.
-    if file_size as usize >= constants::TELEGRAM_CHUNK_SIZE
-        || file_name.ends_with(".manifest")
-    {
+    if file_size as usize >= constants::TELEGRAM_CHUNK_SIZE || file_name.ends_with(".manifest") {
         return;
     }
 
@@ -246,7 +241,9 @@ async fn handle_get_reply(
     let (file_id, file_name) = if let Some(doc) = &replied.document {
         (
             doc.file_id.clone(),
-            doc.file_name.clone().unwrap_or_else(|| format!("file_{}", replied.message_id)),
+            doc.file_name
+                .clone()
+                .unwrap_or_else(|| format!("file_{}", replied.message_id)),
         )
     } else if let Some(photos) = &replied.photo {
         if let Some(photo) = photos.last() {
@@ -298,10 +295,8 @@ async fn handle_get_reply(
         }
     }
 
-    let encoded = percent_encoding::utf8_percent_encode(
-        &final_filename,
-        percent_encoding::NON_ALPHANUMERIC,
-    );
+    let encoded =
+        percent_encoding::utf8_percent_encode(&final_filename, percent_encoding::NON_ALPHANUMERIC);
     let file_path = format!("/d/{}/{}", composite_id, encoded);
 
     let text = if !base_url.is_empty() {
@@ -326,22 +321,6 @@ async fn handle_get_reply(
     .await;
 }
 
-async fn handle_deleted_message(
-    message: &Message,
-    db_pool: &DbPool,
-    event_bus: &BroadcastEventBus,
-) {
-    let message_id = message.message_id;
-
-    match database::delete_file_by_message_id(db_pool, message_id) {
-        Ok(Some(file_id)) => {
-            let event = build_file_event("delete", &file_id, None, None, None, None);
-            event_bus.publish(serde_json::to_string(&event).unwrap_or_default());
-        }
-        _ => {}
-    }
-}
-
 async fn send_message(
     client: &reqwest::Client,
     bot_token: &str,
@@ -357,6 +336,6 @@ async fn send_message(
         }))
         .send()
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| sanitize_bot_token_in_text(&e.to_string(), bot_token))?;
     Ok(())
 }

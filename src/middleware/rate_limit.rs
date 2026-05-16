@@ -127,13 +127,37 @@ pub async fn rate_limit_middleware(
     let ip = extract_ip(&request);
 
     let allowed = if path.starts_with("/api/auth/login") {
-        check_rate(&limiter.login, ip, constants::RATE_LIMIT_LOGIN_MAX, Duration::from_secs(constants::RATE_LIMIT_WINDOW_SECS)).await
+        check_rate(
+            &limiter.login,
+            ip,
+            constants::RATE_LIMIT_LOGIN_MAX,
+            Duration::from_secs(constants::RATE_LIMIT_WINDOW_SECS),
+        )
+        .await
     } else if path.starts_with("/api/upload") {
-        check_rate(&limiter.upload, ip, constants::RATE_LIMIT_UPLOAD_MAX, Duration::from_secs(constants::RATE_LIMIT_WINDOW_SECS)).await
+        check_rate(
+            &limiter.upload,
+            ip,
+            constants::RATE_LIMIT_UPLOAD_MAX,
+            Duration::from_secs(constants::RATE_LIMIT_WINDOW_SECS),
+        )
+        .await
     } else if path.starts_with("/api/") {
-        check_rate(&limiter.api, ip, constants::RATE_LIMIT_API_MAX, Duration::from_secs(constants::RATE_LIMIT_WINDOW_SECS)).await
+        check_rate(
+            &limiter.api,
+            ip,
+            constants::RATE_LIMIT_API_MAX,
+            Duration::from_secs(constants::RATE_LIMIT_WINDOW_SECS),
+        )
+        .await
     } else if path.starts_with("/d/") || path.starts_with("/share/") {
-        check_rate(&limiter.download, ip, constants::RATE_LIMIT_DOWNLOAD_MAX, Duration::from_secs(constants::RATE_LIMIT_WINDOW_SECS)).await
+        check_rate(
+            &limiter.download,
+            ip,
+            constants::RATE_LIMIT_DOWNLOAD_MAX,
+            Duration::from_secs(constants::RATE_LIMIT_WINDOW_SECS),
+        )
+        .await
     } else {
         true
     };
@@ -159,7 +183,12 @@ pub async fn cleanup_expired(limiter: &RateLimiter) {
     let window = Duration::from_secs(constants::RATE_LIMIT_CLEANUP_INTERVAL_SECS);
     let now = Instant::now();
 
-    for store in [&limiter.login, &limiter.upload, &limiter.api, &limiter.download] {
+    for store in [
+        &limiter.login,
+        &limiter.upload,
+        &limiter.api,
+        &limiter.download,
+    ] {
         let mut map = store.lock().await;
         map.retain(|_, entry| now.duration_since(entry.window_start) < window);
     }

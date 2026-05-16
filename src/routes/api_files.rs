@@ -12,6 +12,7 @@ use serde::Deserialize;
 use crate::config;
 use crate::database;
 use crate::error::http_error;
+use crate::events::build_file_event;
 use crate::state::AppState;
 use crate::telegram::service::TelegramService;
 
@@ -102,12 +103,23 @@ fn chunk_download_failed_response(chunk_id: &str) -> Response {
     .into_response()
 }
 
+fn redact_telegram_url(text: &str, bot_token: &str) -> String {
+    crate::telegram::service::sanitize_bot_token_in_text(text, bot_token)
+}
+
 fn is_system_manifest(filesize: i64) -> bool {
     filesize as usize >= crate::constants::TELEGRAM_CHUNK_SIZE
 }
 
 fn delete_as_manifest(meta: &database::FileMetadata) -> bool {
     is_system_manifest(meta.filesize)
+}
+
+fn publish_delete_event(state: &AppState, file_id: &str) {
+    let event = build_file_event("delete", file_id, None, None, None, None);
+    state
+        .event_bus
+        .publish(serde_json::to_string(&event).unwrap_or_default());
 }
 
 async fn serve_file(
@@ -146,6 +158,7 @@ async fn serve_file(
     };
 
     let client = &state.http_client;
+    let bot_token = tg_service.bot_token.clone();
 
     // Peek first 128 bytes to check if manifest
     let peek_resp = match client
@@ -156,7 +169,10 @@ async fn serve_file(
     {
         Ok(r) => r,
         Err(e) => {
-            tracing::error!("下载失败: {}", e);
+            tracing::error!(
+                "下载失败: {}",
+                redact_telegram_url(&e.to_string(), &bot_token)
+            );
             return http_error(StatusCode::BAD_GATEWAY, "无法下载文件", "download_error")
                 .into_response();
         }
@@ -165,7 +181,10 @@ async fn serve_file(
     let peek_bytes = match peek_resp.bytes().await {
         Ok(b) => b,
         Err(e) => {
-            tracing::error!("读取文件失败: {}", e);
+            tracing::error!(
+                "读取文件失败: {}",
+                redact_telegram_url(&e.to_string(), &bot_token)
+            );
             return http_error(StatusCode::BAD_GATEWAY, "读取文件失败", "read_error")
                 .into_response();
         }
@@ -179,7 +198,10 @@ async fn serve_file(
         let full_resp = match client.get(&download_url).send().await {
             Ok(r) => r,
             Err(e) => {
-                tracing::error!("下载清单失败: {}", e);
+                tracing::error!(
+                    "下载清单失败: {}",
+                    redact_telegram_url(&e.to_string(), &bot_token)
+                );
                 return http_error(StatusCode::BAD_GATEWAY, "下载文件失败", "download_error")
                     .into_response();
             }
@@ -187,7 +209,10 @@ async fn serve_file(
         let manifest_bytes = match full_resp.bytes().await {
             Ok(b) => b,
             Err(e) => {
-                tracing::error!("读取清单失败: {}", e);
+                tracing::error!(
+                    "读取清单失败: {}",
+                    redact_telegram_url(&e.to_string(), &bot_token)
+                );
                 return http_error(StatusCode::BAD_GATEWAY, "读取文件失败", "read_error")
                     .into_response();
             }
@@ -278,9 +303,13 @@ async fn serve_file(
                     match chunk {
                         Ok(bytes) => yield Ok::<_, std::io::Error>(bytes),
                         Err(e) => {
+                            let err = crate::telegram::service::sanitize_bot_token_in_text(
+                                &e.to_string(),
+                                &tg.bot_token,
+                            );
                             yield Err::<bytes::Bytes, std::io::Error>(std::io::Error::other(format!(
                                 "Chunk stream error for {}: {}",
-                                chunk_composite, e
+                                chunk_composite, err
                             )));
                             return;
                         }
@@ -312,7 +341,10 @@ async fn serve_file(
         {
             Ok(r) => r,
             Err(e) => {
-                tracing::error!("Range 请求失败: {}", e);
+                tracing::error!(
+                    "Range 请求失败: {}",
+                    redact_telegram_url(&e.to_string(), &bot_token)
+                );
                 return http_error(StatusCode::BAD_GATEWAY, "无法下载文件", "download_error")
                     .into_response();
             }
@@ -335,9 +367,15 @@ async fn serve_file(
         }
 
         let stream = range_resp.bytes_stream();
+        let stream_bot_token = bot_token.clone();
         return builder
-            .body(Body::from_stream(stream.map(|r| {
-                r.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+            .body(Body::from_stream(stream.map(move |r| {
+                r.map_err(|e| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        redact_telegram_url(&e.to_string(), &stream_bot_token),
+                    )
+                })
             })))
             .unwrap();
     }
@@ -346,7 +384,10 @@ async fn serve_file(
     let full_resp = match client.get(&download_url).send().await {
         Ok(r) => r,
         Err(e) => {
-            tracing::error!("下载失败: {}", e);
+            tracing::error!(
+                "下载失败: {}",
+                redact_telegram_url(&e.to_string(), &bot_token)
+            );
             return http_error(StatusCode::BAD_GATEWAY, "无法下载文件", "download_error")
                 .into_response();
         }
@@ -367,9 +408,15 @@ async fn serve_file(
     }
 
     let stream = full_resp.bytes_stream();
+    let stream_bot_token = bot_token;
     builder
-        .body(Body::from_stream(stream.map(|r| {
-            r.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+        .body(Body::from_stream(stream.map(move |r| {
+            r.map_err(|e| {
+                std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    redact_telegram_url(&e.to_string(), &stream_bot_token),
+                )
+            })
         })))
         .unwrap()
 }
@@ -554,6 +601,9 @@ async fn delete_file(
         };
 
         if result.failed_chunks.is_empty() {
+            if db_deleted {
+                publish_delete_event(&state, &meta.file_id);
+            }
             return Json(serde_json::json!({
                 "status": "ok",
                 "message": format!("文件 {} 已删除。", file_id),
@@ -581,6 +631,7 @@ async fn delete_file(
     let force_deleted =
         database::delete_file_metadata(&state.db_pool, &meta.file_id).unwrap_or(false);
     if force_deleted {
+        publish_delete_event(&state, &meta.file_id);
         return Json(serde_json::json!({
             "status": "ok",
             "message": format!("文件 {} 已从数据库删除（Telegram 删除失败）。", file_id),
@@ -638,11 +689,14 @@ async fn batch_delete_files(
             tg_service.delete_regular_file(&meta.file_id).await
         };
         if result.main_message_deleted {
-            database::delete_file_metadata(&state.db_pool, &meta.file_id).ok();
+            if database::delete_file_metadata(&state.db_pool, &meta.file_id).unwrap_or(false) {
+                publish_delete_event(&state, &meta.file_id);
+            }
             deleted.push(fid.clone());
         } else {
             // Try force delete from DB
             if database::delete_file_metadata(&state.db_pool, &meta.file_id).unwrap_or(false) {
+                publish_delete_event(&state, &meta.file_id);
                 deleted.push(fid.clone());
             } else {
                 failed.push(fid.clone());

@@ -10,6 +10,7 @@ use crate::config;
 use crate::database;
 use crate::error::http_error;
 use crate::state::{self, AppState};
+use crate::telegram::service::sanitize_bot_token_in_text;
 
 #[derive(Deserialize)]
 pub struct AppConfigRequest {
@@ -19,8 +20,6 @@ pub struct AppConfigRequest {
     channel_name: Option<String>,
     #[serde(rename = "BASE_URL")]
     base_url: Option<String>,
-    #[serde(rename = "PICGO_API_KEY")]
-    picgo_api_key: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -94,13 +93,6 @@ fn merge_config(
         let v = v.trim().to_string();
         result.insert("BASE_URL".into(), if v.is_empty() { None } else { Some(v) });
     }
-    if let Some(ref v) = incoming.picgo_api_key {
-        let v = v.trim().to_string();
-        result.insert(
-            "PICGO_API_KEY".into(),
-            if v.is_empty() { None } else { Some(v) },
-        );
-    }
     Ok(result)
 }
 
@@ -114,7 +106,6 @@ async fn get_app_config(State(state): State<Arc<AppState>>) -> impl IntoResponse
             "BOT_TOKEN_SET": settings.get("BOT_TOKEN").and_then(|v| v.as_deref()).map_or(false, |v| !v.is_empty()),
             "CHANNEL_NAME": settings.get("CHANNEL_NAME").and_then(|v| v.as_deref()).unwrap_or(""),
             "BASE_URL": settings.get("BASE_URL").and_then(|v| v.as_deref()).unwrap_or(""),
-            "PICGO_API_KEY_SET": settings.get("PICGO_API_KEY").and_then(|v| v.as_deref()).map_or(false, |v| !v.is_empty()),
             "OIDC_CONFIGURED": state.settings.oidc.is_configured(),
             "OIDC_ISSUER_URL": state.settings.oidc.issuer_url.as_deref().unwrap_or(""),
             "OIDC_CLIENT_ID": state.settings.oidc.client_id.as_deref().unwrap_or(""),
@@ -176,7 +167,14 @@ async fn save_and_apply(
         )
     })?;
 
-    let _ = state::apply_runtime_settings(state.clone(), true).await;
+    if let Err(e) = state::apply_runtime_settings(state.clone(), true).await {
+        let message = format!("配置已保存，但启动 Bot 失败: {}", e);
+        return Err(http_error(
+            axum::http::StatusCode::BAD_GATEWAY,
+            &message,
+            "bot_start_failed",
+        ));
+    }
 
     let bot = state.bot_state.lock().await;
 
@@ -262,7 +260,10 @@ async fn verify_bot(
             }
         },
         Err(e) => {
-            tracing::warn!("verify_bot connect error: {}", e);
+            tracing::warn!(
+                "verify_bot connect error: {}",
+                sanitize_bot_token_in_text(&e.to_string(), &token)
+            );
             Json(serde_json::json!({
                 "status": "ok",
                 "ok": false,
@@ -348,7 +349,10 @@ async fn verify_channel(
             }
         },
         Err(e) => {
-            tracing::warn!("verify_channel connect error: {}", e);
+            tracing::warn!(
+                "verify_channel connect error: {}",
+                sanitize_bot_token_in_text(&e.to_string(), &token)
+            );
             Json(serde_json::json!({
                 "status": "ok",
                 "available": false,

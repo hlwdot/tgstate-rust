@@ -7,47 +7,12 @@ use axum::routing::post;
 use axum::{Json, Router};
 use bytes::BytesMut;
 
-use crate::auth::{self, COOKIE_NAME};
 use crate::config;
 use crate::constants;
 use crate::database;
 use crate::error::http_error;
 use crate::state::AppState;
 use crate::telegram::service::TelegramService;
-
-#[derive(Debug, Default)]
-struct UploadAuthProgress {
-    auth_verified: bool,
-}
-
-#[derive(Debug, PartialEq, Eq)]
-enum UploadFieldError {
-    FileBeforeAuth,
-}
-
-fn advance_upload_auth_state(
-    mut state: UploadAuthProgress,
-    prechecked_auth: bool,
-    auth_optional: bool,
-    field_name: &str,
-    _field_value: Option<&str>,
-) -> Result<UploadAuthProgress, UploadFieldError> {
-    if prechecked_auth || auth_optional {
-        state.auth_verified = true;
-        return Ok(state);
-    }
-
-    if field_name == "key" {
-        state.auth_verified = true;
-        return Ok(state);
-    }
-
-    if field_name == "file" && !state.auth_verified {
-        return Err(UploadFieldError::FileBeforeAuth);
-    }
-
-    Ok(state)
-}
 
 /// Sanitize filename: extract basename, limit length, remove dangerous chars.
 fn sanitize_filename(raw: &str) -> String {
@@ -79,7 +44,7 @@ fn sanitize_filename(raw: &str) -> String {
 
 async fn upload_file(
     State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
+    _headers: HeaderMap,
     mut multipart: Multipart,
 ) -> Result<impl IntoResponse, impl IntoResponse> {
     let app_settings = config::get_app_settings(&state.settings, &state.db_pool);
@@ -101,51 +66,8 @@ async fn upload_file(
         ));
     }
 
-    // Pre-check auth with header-only info (before consuming body)
-    let has_referer = headers.get("referer").is_some();
-    let cookie_value = headers
-        .get("cookie")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|cookies| {
-            cookies.split(';').find_map(|c| {
-                let c = c.trim();
-                c.strip_prefix(&format!("{}=", COOKIE_NAME))
-                    .map(|v| v.to_string())
-            })
-        });
-
-    let picgo_key = app_settings.get("PICGO_API_KEY").and_then(|v| v.as_deref());
-    let oidc_required = state.settings.oidc.is_configured();
-
-    let header_key = headers
-        .get("x-api-key")
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.to_string());
-    let auth_optional = picgo_key.map_or(true, |k| k.is_empty()) && !oidc_required;
-    // Pre-check auth using only HEADER-available credentials: the session
-    // cookie (browser login) and/or x-api-key (PicGo / API clients). These
-    // are the only credentials that exist before we consume the multipart
-    // body. Referer is client-controlled and auth.rs ignores it.
-    let cookie_valid = cookie_value
-        .as_deref()
-        .and_then(|token| {
-            database::get_auth_session(&state.db_pool, token)
-                .ok()
-                .flatten()
-        })
-        .is_some();
-    // ensure_upload_auth handles the x-api-key / PicGo path. Browser session
-    // cookies are checked against the server-side OIDC session table above.
-    let prechecked_auth = cookie_valid
-        || auth::ensure_upload_auth(has_referer, picgo_key, oidc_required, header_key.as_deref())
-            .is_ok();
-
     // Parse multipart body - stream file chunks to Telegram
-    let mut form_key: Option<String> = None;
     let mut upload_result: Option<Result<String, String>> = None;
-    let mut auth_progress = UploadAuthProgress {
-        auth_verified: prechecked_auth || auth_optional,
-    };
 
     let tg_service = TelegramService::new(
         bot_token.to_string(),
@@ -155,48 +77,7 @@ async fn upload_file(
 
     while let Ok(Some(field)) = multipart.next_field().await {
         let name = field.name().unwrap_or("").to_string();
-        if name == "key" {
-            let key_text = field.text().await.ok();
-            if !auth_progress.auth_verified {
-                if let Err((_, msg, code)) = auth::ensure_upload_auth(
-                    has_referer,
-                    picgo_key,
-                    oidc_required,
-                    key_text.as_deref(),
-                ) {
-                    return Err(http_error(axum::http::StatusCode::UNAUTHORIZED, msg, code));
-                }
-            }
-            auth_progress = advance_upload_auth_state(
-                auth_progress,
-                prechecked_auth,
-                auth_optional,
-                &name,
-                key_text.as_deref(),
-            )
-            .map_err(|_| {
-                http_error(
-                    axum::http::StatusCode::UNAUTHORIZED,
-                    "upload auth required before file field",
-                    "file_before_auth",
-                )
-            })?;
-            form_key = key_text;
-        } else if name == "file" {
-            auth_progress = advance_upload_auth_state(
-                auth_progress,
-                prechecked_auth,
-                auth_optional,
-                &name,
-                None,
-            )
-            .map_err(|_| {
-                http_error(
-                    axum::http::StatusCode::UNAUTHORIZED,
-                    "upload auth required before file field",
-                    "file_before_auth",
-                )
-            })?;
+        if name == "file" {
             let raw_filename = field.file_name().unwrap_or("upload").to_string();
             let filename = sanitize_filename(&raw_filename);
 
@@ -204,19 +85,6 @@ async fn upload_file(
             upload_result = Some(
                 stream_upload_to_telegram(&tg_service, field, &filename, &state.db_pool).await,
             );
-        }
-    }
-
-    // Final auth check with form-level `key`. Only needed when header-level
-    // credentials (cookie / x-api-key) did not already satisfy auth — e.g.
-    // PicGo clients that authenticate by submitting PICGO_API_KEY in the
-    // multipart body instead of as a header.
-    if !prechecked_auth {
-        let final_key = form_key.as_deref();
-        if let Err((_, msg, code)) =
-            auth::ensure_upload_auth(has_referer, picgo_key, oidc_required, final_key)
-        {
-            return Err(http_error(axum::http::StatusCode::UNAUTHORIZED, msg, code));
         }
     }
 
@@ -352,11 +220,10 @@ pub fn router() -> Router<Arc<AppState>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{advance_upload_auth_state, UploadAuthProgress, UploadFieldError};
     use crate::config::{OidcSettings, Settings};
     use crate::database;
     use crate::state::AppState;
-    use axum::body::{to_bytes, Body};
+    use axum::body::Body;
     use axum::http::{header, Request, StatusCode};
     use axum::Router;
     use std::sync::Arc;
@@ -376,7 +243,6 @@ mod tests {
         let settings = Settings {
             bot_token: Some("123456:test-token".into()),
             channel_name: Some("@test_channel".into()),
-            picgo_api_key: None,
             base_url: "http://127.0.0.1:8000".into(),
             _mode: "p".into(),
             _file_route: "/d/".into(),
@@ -402,10 +268,10 @@ mod tests {
         ))
     }
 
-    fn multipart_request_with_file_before_key() -> Request<Body> {
+    fn multipart_request_without_file() -> Request<Body> {
         let boundary = "X-BOUNDARY";
         let body = format!(
-            "--{b}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"test.txt\"\r\nContent-Type: text/plain\r\n\r\nhello\r\n--{b}\r\nContent-Disposition: form-data; name=\"key\"\r\n\r\nsecret\r\n--{b}--\r\n",
+            "--{b}\r\nContent-Disposition: form-data; name=\"note\"\r\n\r\nignored\r\n--{b}--\r\n",
             b = boundary
         );
 
@@ -420,41 +286,15 @@ mod tests {
             .unwrap()
     }
 
-    #[test]
-    fn upload_requires_key_before_file_for_api_requests() {
-        let state = UploadAuthProgress::default();
-        let result = advance_upload_auth_state(state, false, false, "file", None);
-        assert!(matches!(result, Err(UploadFieldError::FileBeforeAuth)));
-    }
-
-    #[test]
-    fn upload_accepts_key_before_file_for_api_requests() {
-        let state = UploadAuthProgress::default();
-        let state = advance_upload_auth_state(state, false, false, "key", Some("secret")).unwrap();
-        let state = advance_upload_auth_state(state, false, false, "file", None).unwrap();
-        assert!(state.auth_verified);
-    }
-
     #[tokio::test]
-    async fn upload_route_rejects_file_field_before_auth() {
+    async fn upload_route_rejects_missing_file_field() {
         let state = test_state();
         let app = Router::new()
             .merge(super::router())
             .with_state(state.clone());
-        let response = app
-            .oneshot(multipart_request_with_file_before_key())
-            .await
-            .unwrap();
+        let response = app.oneshot(multipart_request_without_file()).await.unwrap();
 
-        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-
-        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-        let text = String::from_utf8(body.to_vec()).unwrap();
-        assert!(
-            text.contains("file_before_auth"),
-            "unexpected body: {}",
-            text
-        );
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 
         let files = database::get_all_files(&state.db_pool).unwrap();
         assert!(files.is_empty(), "unexpected files persisted: {:?}", files);

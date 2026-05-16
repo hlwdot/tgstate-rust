@@ -238,17 +238,7 @@ pub async fn auth_middleware(
     let cookie = extract_cookie(&headers, COOKIE_NAME);
 
     if !state.settings.oidc.is_configured() {
-        let first_run_public = [
-            "/",
-            "/api/app-config",
-            "/api/app-config/save",
-            "/api/app-config/apply",
-            "/api/verify/",
-        ];
-        if first_run_public
-            .iter()
-            .any(|p| path_matches_public_entry(&path, p))
-        {
+        if path == "/" || path == "/api/app-config" {
             return next.run(req).await;
         }
 
@@ -279,8 +269,17 @@ pub async fn auth_middleware(
 
 #[cfg(test)]
 mod tests {
-    use super::csrf_origin_allowed;
-    use axum::http::{header, HeaderMap, HeaderValue};
+    use super::{auth_middleware, csrf_origin_allowed};
+    use crate::config::{OidcSettings, Settings};
+    use crate::database;
+    use crate::state::AppState;
+    use axum::body::Body;
+    use axum::http::{header, HeaderMap, HeaderValue, Request, StatusCode};
+    use axum::routing::{get, post};
+    use axum::Router;
+    use std::sync::Arc;
+    use std::time::{SystemTime, UNIX_EPOCH};
+    use tower::ServiceExt;
 
     fn headers(host: &str, origin: Option<&str>) -> HeaderMap {
         let mut headers = HeaderMap::new();
@@ -307,5 +306,136 @@ mod tests {
     fn csrf_allows_non_browser_clients_without_origin_headers() {
         let headers = headers("127.0.0.1:8000", None);
         assert!(csrf_origin_allowed(&headers));
+    }
+
+    fn test_state(oidc_configured: bool) -> Arc<AppState> {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let data_dir = std::env::temp_dir()
+            .join(format!("tgstate-auth-test-{}", unique))
+            .to_string_lossy()
+            .to_string();
+
+        let oidc = if oidc_configured {
+            OidcSettings {
+                issuer_url: Some("https://auth.example.com".into()),
+                client_id: Some("tgstate".into()),
+                client_secret: Some("secret".into()),
+            }
+        } else {
+            OidcSettings {
+                issuer_url: None,
+                client_id: None,
+                client_secret: None,
+            }
+        };
+
+        let settings = Settings {
+            bot_token: Some("123456:test-token".into()),
+            channel_name: Some("@test_channel".into()),
+            base_url: "http://127.0.0.1:8000".into(),
+            _mode: "p".into(),
+            _file_route: "/d/".into(),
+            data_dir: data_dir.clone(),
+            oidc,
+        };
+
+        let db_pool = database::init_db(&data_dir);
+        let app_settings = crate::config::get_app_settings(&settings, &db_pool);
+        Arc::new(AppState::new(
+            settings,
+            tera::Tera::default(),
+            reqwest::Client::new(),
+            db_pool,
+            app_settings,
+            true,
+        ))
+    }
+
+    fn auth_test_app(state: Arc<AppState>) -> Router {
+        Router::new()
+            .route("/api/app-config", get(|| async { "config" }))
+            .route("/api/app-config/save", post(|| async { "saved" }))
+            .route("/settings", get(|| async { "settings" }))
+            .route("/d/file", get(|| async { "file" }))
+            .layer(axum::middleware::from_fn_with_state(state, auth_middleware))
+    }
+
+    fn same_origin_post(path: &str) -> Request<Body> {
+        Request::builder()
+            .method("POST")
+            .uri(path)
+            .header(header::HOST, "127.0.0.1:8000")
+            .header(header::ORIGIN, "http://127.0.0.1:8000")
+            .body(Body::empty())
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn first_run_allows_read_only_setup_but_blocks_writes() {
+        let state = test_state(false);
+        let app = auth_test_app(state);
+
+        let read_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/app-config")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(read_response.status(), StatusCode::OK);
+
+        let write_response = app
+            .clone()
+            .oneshot(same_origin_post("/api/app-config/save"))
+            .await
+            .unwrap();
+        assert_eq!(write_response.status(), StatusCode::UNAUTHORIZED);
+
+        let public_file_response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/d/file")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(public_file_response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn authenticated_session_still_reaches_protected_routes() {
+        let state = test_state(true);
+        let token = crate::auth::generate_session_token();
+        database::insert_auth_session(
+            &state.db_pool,
+            &token,
+            "subject",
+            Some("user"),
+            Some("user@example.com"),
+            3600,
+        )
+        .unwrap();
+
+        let response = auth_test_app(state)
+            .oneshot(
+                Request::builder()
+                    .uri("/settings")
+                    .header(
+                        header::COOKIE,
+                        format!("{}={}", crate::auth::COOKIE_NAME, token),
+                    )
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
     }
 }

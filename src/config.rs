@@ -8,7 +8,6 @@ pub type AppSettingsMap = HashMap<String, Option<String>>;
 pub struct Settings {
     pub bot_token: Option<String>,
     pub channel_name: Option<String>,
-    pub picgo_api_key: Option<String>,
     pub base_url: String,
     pub _mode: String,
     pub _file_route: String,
@@ -28,9 +27,6 @@ impl Settings {
         Self {
             bot_token: std::env::var("BOT_TOKEN").ok().filter(|s| !s.is_empty()),
             channel_name: std::env::var("CHANNEL_NAME").ok().filter(|s| !s.is_empty()),
-            picgo_api_key: std::env::var("PICGO_API_KEY")
-                .ok()
-                .filter(|s| !s.is_empty()),
             base_url: std::env::var("BASE_URL").unwrap_or_else(|_| "http://127.0.0.1:8000".into()),
             _mode: std::env::var("MODE").unwrap_or_else(|_| "p".into()),
             _file_route: std::env::var("FILE_ROUTE").unwrap_or_else(|_| "/d/".into()),
@@ -79,7 +75,6 @@ pub fn get_app_settings(settings: &Settings, pool: &DbPool) -> AppSettingsMap {
     let mut result = HashMap::new();
     result.insert("BOT_TOKEN".into(), settings.bot_token.clone());
     result.insert("CHANNEL_NAME".into(), settings.channel_name.clone());
-    result.insert("PICGO_API_KEY".into(), settings.picgo_api_key.clone());
     result.insert("BASE_URL".into(), Some(settings.base_url.clone()));
 
     if let Ok(db_settings) = database::get_app_settings_from_db(pool) {

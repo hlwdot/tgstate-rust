@@ -12,8 +12,6 @@ pub struct Update {
     pub update_id: i64,
     pub message: Option<Message>,
     pub channel_post: Option<Message>,
-    pub edited_message: Option<Message>,
-    pub edited_channel_post: Option<Message>,
 }
 
 #[derive(Debug, Deserialize)]

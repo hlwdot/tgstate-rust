@@ -9,8 +9,8 @@
 - 通过 Web 界面或 API 上传文件到 Telegram 频道
 - 大文件自动分块上传（>19.5MB），下载时流式拼接
 - 短链接分享，支持在线预览（图片、视频、PDF、文本等）
-- 图床模式，兼容 PicGo API
-- Telegram Bot 自动同步频道文件变动
+- 图床模式，支持网页登录后批量上传图片并复制链接
+- Telegram Bot 自动同步频道新增文件；应用内删除会实时同步页面
 - SSE 实时推送文件列表更新
 - 网页引导式配置，无需预填环境变量
 - 全站安全加固（CSP、CSRF、Rate Limiting、会话超时）
@@ -68,14 +68,14 @@ cargo build --release
 
 ## 配置流程
 
-1. 先确定公开访问地址 `BASE_URL`，例如 `https://你的图床域名`
+1. 先确定公开访问地址 `BASE_URL`，例如 `https://你的文件域名`
 2. 在 Authelia 创建 OIDC 客户端，回调地址设为 `BASE_URL/api/auth/callback`
 3. 通过环境变量配置 `BASE_URL`、`OIDC_ISSUER_URL`、`OIDC_CLIENT_ID`、`OIDC_CLIENT_SECRET`
 4. 启动后访问 Web 界面，使用 Authelia 登录
 5. 进入「系统设置」页面，填写 Bot Token（从 [@BotFather](https://t.me/BotFather) 获取）和频道名
 6. 点击「保存并应用」
 
-Telegram 和 PicGo 配置保存在本地数据库中；OIDC 统一身份认证配置来自环境变量。
+Telegram 配置保存在本地数据库中；OIDC 统一身份认证配置来自环境变量。
 
 ## 环境变量
 
@@ -88,7 +88,6 @@ OIDC 是管理界面的强制登录方式，必须先配置后才能使用后台
 | `OIDC_CLIENT_SECRET` | Authelia OIDC 客户端密钥 | 必填 |
 | `BOT_TOKEN` | Telegram Bot Token | - |
 | `CHANNEL_NAME` | 目标频道 `@name` 或 `-100xxx` | - |
-| `PICGO_API_KEY` | PicGo 上传 API 密钥 | - |
 | `BASE_URL` | 公开访问 URL，也用于生成 OIDC callback，例如 `https://your-domain.example` | `http://127.0.0.1:8000` |
 | `DATA_DIR` | 数据目录 | `app/data` |
 | `LOG_LEVEL` | 日志级别 | `info` |
@@ -132,20 +131,12 @@ OIDC 是管理界面的强制登录方式，必须先配置后才能使用后台
 | `POST` | `/api/verify/bot` | 验证 Bot Token |
 | `POST` | `/api/verify/channel` | 验证频道 |
 
-### PicGo 兼容
-
-```bash
-curl -X POST http://your-host:8000/api/upload \
-  -H "X-Api-Key: your_picgo_api_key" \
-  -F "file=@image.png"
-```
-
 ## 安全
 
 - CSRF 防护（Origin 头校验）
 - 登录限流（5 次/分钟/IP）
 - Content Security Policy
-- Cookie 加固（HttpOnly、SameSite=Strict、24h 超时）
+- Cookie 加固（HttpOnly、SameSite=Strict、7天有效期，活跃访问滑动刷新）
 - API 白名单认证
 - 输入验证与错误脱敏
 - 安全头（X-Frame-Options、X-XSS-Protection 等）

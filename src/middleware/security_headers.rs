@@ -18,7 +18,10 @@ pub async fn security_headers_middleware(request: Request, next: Next) -> Respon
     // Prevent clickjacking
     headers.insert("X-Frame-Options", "DENY".parse().unwrap());
     // No referrer leakage
-    headers.insert("Referrer-Policy", "strict-origin-when-cross-origin".parse().unwrap());
+    headers.insert(
+        "Referrer-Policy",
+        "strict-origin-when-cross-origin".parse().unwrap(),
+    );
     // Disable unnecessary browser features
     headers.insert(
         "Permissions-Policy",

@@ -38,6 +38,8 @@ Out of scope:
 - Configure Authelia OIDC (`OIDC_ISSUER_URL`, `OIDC_CLIENT_ID`,
   `OIDC_CLIENT_SECRET`) before exposing the web UI. The redirect URI is
   derived from configured `BASE_URL` as `BASE_URL/api/auth/callback`.
+  Until OIDC is configured, the setup UI is read-only and state-changing
+  configuration/upload endpoints remain unavailable.
 - Restrict who can use the client in Authelia's OIDC/access policy.
 - Put the service behind a reverse proxy that terminates TLS and forwards
   `X-Forwarded-Proto: https`; set `COOKIE_SECURE=1` to force `Secure` cookies
@@ -79,3 +81,11 @@ Rate limits are keyed per client IP address and per bucket:
 Behind a reverse proxy you must set `TRUST_FORWARDED_FOR=1` for the limiter
 to see real client IPs; otherwise every request appears to come from the
 proxy and a single misbehaving client can exhaust the bucket for everyone.
+
+## Telegram channel synchronization
+
+The bot syncs new documents/photos that arrive through Telegram `message` and
+`channel_post` updates. Telegram Bot API `getUpdates` does not provide ordinary
+channel message deletion events, so deletes made outside tgState cannot be
+inferred reliably. Delete files through the tgState UI/API when you need the
+local database and open pages to update immediately.

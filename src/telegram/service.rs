@@ -44,6 +44,10 @@ impl TelegramService {
         )
     }
 
+    fn sanitize_error(&self, err: impl std::fmt::Display) -> String {
+        sanitize_bot_token_in_text(&err.to_string(), &self.bot_token)
+    }
+
     pub async fn get_download_url(&self, file_id: &str) -> Result<Option<String>, String> {
         let url = self.api_url("getFile");
         let resp = self
@@ -55,7 +59,7 @@ impl TelegramService {
             ))
             .send()
             .await
-            .map_err(|e| format!("getFile request failed: {}", e))?;
+            .map_err(|e| format!("getFile request failed: {}", self.sanitize_error(e)))?;
 
         let data: TelegramResponse<TelegramFile> = resp
             .json()
@@ -101,9 +105,13 @@ impl TelegramService {
             .post(&self.api_url("sendDocument"))
             .multipart(form)
             .send()
-            .await?;
+            .await
+            .map_err(|e| AppErrorKind::Telegram(self.sanitize_error(e)))?;
 
-        let data: TelegramResponse<Message> = resp.json().await?;
+        let data: TelegramResponse<Message> = resp
+            .json()
+            .await
+            .map_err(|e| AppErrorKind::Telegram(self.sanitize_error(e)))?;
 
         if data.ok {
             data.result
@@ -145,7 +153,7 @@ impl TelegramService {
                 }
             }
             Err(e) => {
-                tracing::error!("deleteMessage failed: {}", e);
+                tracing::error!("deleteMessage failed: {}", self.sanitize_error(e));
                 (false, "error".into())
             }
         }
@@ -284,9 +292,9 @@ impl TelegramService {
             ))
             .send()
             .await
-            .map_err(|e| format!("Download manifest failed: {}", e))?;
+            .map_err(|e| format!("Download manifest failed: {}", self.sanitize_error(e)))?;
 
-        let body = resp.bytes().await.map_err(|e| e.to_string())?;
+        let body = resp.bytes().await.map_err(|e| self.sanitize_error(e))?;
 
         if !body.starts_with(b"tgstate-blob\n") {
             return Err("Not a manifest file".into());
@@ -299,5 +307,28 @@ impl TelegramService {
         }
 
         Ok(lines[1].to_string())
+    }
+}
+
+pub fn sanitize_bot_token_in_text(text: &str, bot_token: &str) -> String {
+    if bot_token.is_empty() {
+        text.to_string()
+    } else {
+        text.replace(&format!("bot{}", bot_token), "bot<redacted>")
+            .replace(bot_token, "<redacted>")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sanitize_bot_token_in_text;
+
+    #[test]
+    fn telegram_bot_token_is_redacted_from_urls() {
+        let token = "123456:secret-token";
+        let err = "error sending request for url (https://api.telegram.org/bot123456:secret-token/getFile)";
+        let redacted = sanitize_bot_token_in_text(err, token);
+        assert!(!redacted.contains(token));
+        assert!(redacted.contains("bot<redacted>"));
     }
 }
