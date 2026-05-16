@@ -89,6 +89,8 @@ OIDC 是管理界面的强制登录方式，必须先配置后才能使用后台
 | `BOT_TOKEN` | Telegram Bot Token | - |
 | `CHANNEL_NAME` | 目标频道 `@name` 或 `-100xxx` | - |
 | `BASE_URL` | 公开访问 URL，也用于生成 OIDC callback，例如 `https://your-domain.example` | `http://127.0.0.1:8000` |
+| `HOST` | 监听地址 | `0.0.0.0` |
+| `PORT` | 监听端口 | `8000` |
 | `DATA_DIR` | 数据目录 | `app/data` |
 | `LOG_LEVEL` | 日志级别 | `info` |
 | `SESSION_MAX_AGE_SECS` | 登录会话 Cookie 有效期（秒） | `604800` (7天) |

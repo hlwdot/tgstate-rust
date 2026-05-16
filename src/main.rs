@@ -128,7 +128,8 @@ async fn main() {
         .unwrap_or_else(|_| "8000".into())
         .parse()
         .unwrap_or(8000);
-    let addr = format!("0.0.0.0:{}", port);
+    let host = std::env::var("HOST").unwrap_or_else(|_| "0.0.0.0".into());
+    let addr = format!("{}:{}", host, port);
     tracing::info!("服务器监听: {}", addr);
 
     let listener = TcpListener::bind(addr).await.expect("Failed to bind");
