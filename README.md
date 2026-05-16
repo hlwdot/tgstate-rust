@@ -69,7 +69,7 @@ cargo build --release
 ## 配置流程
 
 1. 先确定公开访问地址 `BASE_URL`，例如 `https://你的文件域名`
-2. 在 Authelia 创建 OIDC 客户端，回调地址设为 `BASE_URL/api/auth/callback`
+2. 在 Authelia 创建 OIDC 客户端，回调地址设为 `BASE_URL` + `OIDC_CALLBACK_PATH`
 3. 通过环境变量配置 `BASE_URL`、`OIDC_ISSUER_URL`、`OIDC_CLIENT_ID`、`OIDC_CLIENT_SECRET`
 4. 启动后访问 Web 界面，使用 Authelia 登录
 5. 进入「系统设置」页面，填写 Bot Token（从 [@BotFather](https://t.me/BotFather) 获取）和频道名
@@ -86,6 +86,7 @@ OIDC 是管理界面的强制登录方式，必须先配置后才能使用后台
 | `OIDC_ISSUER_URL` | Authelia issuer URL，例如 `https://auth.example.com` | 必填 |
 | `OIDC_CLIENT_ID` | Authelia OIDC 客户端 ID | 必填 |
 | `OIDC_CLIENT_SECRET` | Authelia OIDC 客户端密钥 | 必填 |
+| `OIDC_CALLBACK_PATH` | OIDC 回调路径 | `/api/auth/callback` |
 | `BOT_TOKEN` | Telegram Bot Token | - |
 | `CHANNEL_NAME` | 目标频道 `@name` 或 `-100xxx` | - |
 | `BASE_URL` | 公开访问 URL，也用于生成 OIDC callback，例如 `https://your-domain.example` | `http://127.0.0.1:8000` |

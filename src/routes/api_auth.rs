@@ -133,7 +133,13 @@ fn oidc_redirect_url(state: &AppState) -> Result<String, axum::response::Respons
         ));
     }
 
-    Ok(format!("{}/api/auth/callback", base_url))
+    let callback_path = std::env::var("OIDC_CALLBACK_PATH")
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| v.starts_with('/') && !v.starts_with("//"))
+        .unwrap_or_else(|| "/api/auth/callback".into());
+
+    Ok(format!("{}{}", base_url, callback_path))
 }
 
 type TgOidcClient = CoreClient<
@@ -467,6 +473,7 @@ pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/api/auth/login", get(login_start))
         .route("/api/auth/callback", get(login_callback))
+        .route("/api/auth/oidc/callback", get(login_callback))
         .route("/api/auth/logout", post(logout))
         .route("/api/auth/session", get(session))
 }

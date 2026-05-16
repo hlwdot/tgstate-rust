@@ -222,6 +222,7 @@ pub async fn auth_middleware(
         "/api/health",
         "/api/auth/login",
         "/api/auth/callback",
+        "/api/auth/oidc/callback",
         "/api/auth/logout",
     ];
     if public_api
